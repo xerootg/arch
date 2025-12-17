@@ -32,26 +32,26 @@ jobs:
             tree
 
       - name: Checkout Pacman Repo Builder
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: pacman-repo-builder/pacman-repo-builder
           path: pacman-repo-builder
 
       - name: Checkout this repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: true
           path: repo
 
       - name: Get GitHub App token for GitHub Pages
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.PAGES_BOT_APP_ID }}
           private-key: ${{ secrets.PAGES_BOT_PRIVATE_KEY }}
 
       - name: Checkout GitHub Pages Repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/${{ github.repository_owner }}.github.io
           ref: main
