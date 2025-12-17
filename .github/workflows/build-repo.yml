@@ -37,6 +37,12 @@ jobs:
           repository: pacman-repo-builder/pacman-repo-builder
           path: pacman-repo-builder
 
+      - name: Checkout yay
+        uses: actions/checkout@v6
+        with:
+          repository: Jguer/yay
+          path: yay
+
       - name: Checkout this repo
         uses: nick-fields/retry@v3
         with:
@@ -78,6 +84,11 @@ jobs:
         run: |
           build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
         working-directory: repo
+
+      - name: Install yay
+        run: |
+          makepkg -si --noconfirm
+        working-directory: yay
 
       - name: Build Pacman Repo
         run: |
