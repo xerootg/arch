@@ -39,7 +39,7 @@ jobs:
         with:
           repository: pacman-repo-builder/pacman-repo-builder
           path: pacman-repo-builder
-      
+
       - name: Checkout this repo
         uses: actions/checkout@v4
         with:
@@ -52,7 +52,7 @@ jobs:
         with:
           app-id: ${{ secrets.PAGES_BOT_APP_ID }}
           private-key: ${{ secrets.PAGES_BOT_PRIVATE_KEY }}
-      
+
       - name: Checkout GitHub Pages Repo
         uses: actions/checkout@v4
         with:
@@ -63,32 +63,13 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: set the working directory
-        run: cd pacman-repo-builder
-
-      - name: Install toolchain
-        uses: ./ci/github-actions/arch-run
-        with:
-          command: rustup target add x86_64-unknown-linux-gnu
-          
-      - name: Update dependencies
-        uses: ./ci/github-actions/arch-run
-        with:
-          command: cargo update
-
-      - name: Build
-        uses: ./ci/github-actions/arch-run
-        with:
-          command: cargo build --target x86_64-unknown-linux-gnu
-
-      - name: Copy built binary to working directory
-        uses: ./ci/github-actions/arch-run
-        with:
-          command: cp target/x86_64-unknown-linux-gnu/debug/build-pacman-repo .
-        
-      - name: Install build-pacman-repo
+      - name: Build and Install build-pacman-repo
         run: |
-          install -Dm755 build-pacman-repo /usr/local/bin/build-pacman-repo
+          rustup target add x86_64-unknown-linux-gnu
+          cargo update -vv --recursive
+          cargo build --release --target x86_64-unknown-linux-gnu
+          install -Dm755 target/x86_64-unknown-linux-gnu/release/build-pacman-repo /usr/local/bin/build-pacman-repo
+        working-directory: pacman-repo-builder
 
       - name: Build Pacman Repo
         run: |
@@ -112,4 +93,4 @@ jobs:
           branch: main
           directory: github-pages
           github_token: ${{ steps.app-token.outputs.token }}
-          message: 'Update per ${{ github.event_name }}: ${{ github.sha }}'
+          message: "Update per ${{ github.event_name }}: ${{ github.sha }}"
