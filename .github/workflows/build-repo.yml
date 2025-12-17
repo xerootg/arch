@@ -16,6 +16,7 @@ concurrency:
 jobs:
   build-pacman-repo:
     runs-on: ubuntu-latest
+    environment: prod
     container:
       image: archlinux:base-devel
     steps:
