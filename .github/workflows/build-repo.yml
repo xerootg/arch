@@ -44,6 +44,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
+          path: repo
 
       - name: Get GitHub App token for GitHub Pages
         id: app-token
@@ -77,6 +78,9 @@ jobs:
 
       - name: Build Pacman Repo
         run: |
+          test -d ../github-pages/archlinux
+          rm -rf github-pages/archlinux
+          ln -s ../github-pages/archlinux github-pages/archlinux
           build-pacman-repo build
         working-directory: repo
       - name: GitHub Commit & Push
