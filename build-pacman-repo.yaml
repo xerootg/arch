@@ -2,7 +2,7 @@
 global-settings:
   repository: github-pages/archlinux/custom.db.tar.gz
   container: pkgbuilds
-  read-build-metadata: either
+  read-build-metadata: pkgbuild
   record-failed-builds: failed-builds.yaml
   install-missing-dependencies: true
   clean-before-build: false
@@ -16,6 +16,4 @@ global-settings:
   dereference-database-symlinks: true
 members:
   - directory: libfprint-elanmoc2-slg3-git
-    read-build-metadata: pkgbuild
   # - directory: orca-slicer-git
-  #   read-build-metadata: pkgbuild
