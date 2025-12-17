@@ -4,3 +4,6 @@
 [submodule "pkgbuilds/orca-slicer-git"]
 	path = pkgbuilds/orca-slicer-git
 	url = https://aur.archlinux.org/orca-slicer-git.git
+[submodule "pkgbuilds/imhex"]
+	path = pkgbuilds/imhex
+	url = https://aur.archlinux.org/imhex.git
