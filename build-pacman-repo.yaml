@@ -2,12 +2,12 @@
 global-settings:
   repository: ${PACMAN_REPO_OUTPUT:-../github-pages/archlinux/custom.db.tar.gz}
   container: pkgbuilds
-  read-build-metadata: pkgbuild
+  read-build-metadata: srcinfo # or "pkgbuild" or "either"
   record-failed-builds: failed-builds.yaml
   install-missing-dependencies: true
   clean-before-build: false
   clean-after-build: false
-  force-rebuild: true
+  force-rebuild: false
   pacman: pacman
   arch-filter: [x86_64]
   check: inherit

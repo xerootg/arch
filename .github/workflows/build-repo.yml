@@ -40,7 +40,7 @@ jobs:
       - name: Checkout yay
         uses: actions/checkout@v6
         with:
-          repository: Jguer/yay
+          repository: https://aur.archlinux.org/yay.git
           path: yay
 
       - name: Checkout this repo
@@ -89,6 +89,15 @@ jobs:
         run: |
           makepkg -si --noconfirm
         working-directory: yay
+
+      - name: Update SRCINFO for git packages
+        run: |
+          for dir in pkgbuilds/*; do
+            if [ -d "$dir" ]; then
+              (cd "$dir" && makepkg --printsrcinfo > .SRCINFO)
+            fi
+          done
+        working-directory: repo
 
       - name: Build Pacman Repo
         run: |
