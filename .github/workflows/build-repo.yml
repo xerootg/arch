@@ -38,10 +38,13 @@ jobs:
           path: pacman-repo-builder
 
       - name: Checkout yay
-        uses: actions/checkout@v6
+        uses: nick-fields/retry@v3
         with:
-          repository: https://aur.archlinux.org/yay.git
-          path: yay
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: |
+            git clone https://aur.archlinux.org/yay.git yay
 
       - name: Checkout this repo
         uses: nick-fields/retry@v3
