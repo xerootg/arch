@@ -93,9 +93,28 @@ jobs:
 
       - name: Copy packages to GitHub Pages
         run: |
-          # first, check if we have a db file
-          test -f pkgbuilds/custom.db.tar.gz || (echo "No packages built, skipping copy step" && exit 1)
-          cp -f pkgbuilds/* "$GITHUB_WORKSPACE/github-pages/archlinux/"
+          REPO_DIR="$GITHUB_WORKSPACE/github-pages/archlinux"
+          DB_FILE="$REPO_DIR/custom.db.tar.gz"
+
+          # copy all built packages from pkgbuilds subdirectories to github-pages/archlinux
+          PKG_COUNT=$(find pkgbuilds -maxdepth 2 -name "*.pkg.tar.zst" | wc -l)
+          if [ "$PKG_COUNT" -eq 0 ]; then
+            echo "ERROR: No packages found to copy"
+            exit 3
+          fi
+          find pkgbuilds -maxdepth 2 -name "*.pkg.tar.zst" -exec cp {} "$REPO_DIR/" \;
+
+          # create or update the database with repo-add
+          if [ ! -f "$DB_FILE" ]; then
+            echo "WARNING: Database not found, creating new one with repo-add"
+          fi
+
+          # add all packages to the database (repo-add creates it if missing)
+          for pkg in "$REPO_DIR"/*.pkg.tar.zst; do
+            [ -f "$pkg" ] && repo-add "$DB_FILE" "$pkg"
+          done
+
+          ls -lah "$REPO_DIR/"
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
 
