@@ -71,10 +71,13 @@ jobs:
           install -Dm755 target/release/build-pacman-repo /usr/local/bin/build-pacman-repo
         working-directory: pacman-repo-builder
 
+      - name: Patch makepkg
+        run: |
+          build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
+        working-directory: repo
+
       - name: Build Pacman Repo
         run: |
-          # set the working directory
-          build-pacman-repo patch-makepkg --replace
           build-pacman-repo build
         working-directory: repo
 
