@@ -74,14 +74,14 @@ jobs:
       - name: Build Pacman Repo
         run: |
           # set the working directory
-          cd ../repo
           build-pacman-repo patch-makepkg --replace
           build-pacman-repo build
+        working-directory: repo
 
       - name: Copy packages to GitHub Pages
         run: |
           mkdir -p github-pages/archlinux
-          cp -f pkgbuilds/*.pkg.tar.zst github-pages/archlinux/ 2>/dev/null || true
+          cp -f repo/pkgbuilds/*.pkg.tar.zst github-pages/archlinux/ 2>/dev/null || true
 
       - name: GitHub Commit & Push
         if: github.event_name == 'schedule' || github.event_name == 'push'
