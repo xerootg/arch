@@ -1,6 +1,6 @@
 ---
 global-settings:
-  repository: ../github-pages/archlinux/custom.db.tar.gz
+  repository: ${PACMAN_REPO_OUTPUT:-../github-pages/archlinux/custom.db.tar.gz}
   container: pkgbuilds
   read-build-metadata: pkgbuild
   record-failed-builds: failed-builds.yaml

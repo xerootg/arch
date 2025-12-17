@@ -82,15 +82,22 @@ jobs:
           # temporarily delete the orca-slicer-git submodule if it exists
           test -d pkgbuilds/orca-slicer-git && rm -rf pkgbuilds/orca-slicer-git || echo "orca-slicer-git submodule not present, continuing"
           # ensure github-pages/archlinux directory exists, if not, we can't copy files later
-          test -d ../github-pages/archlinux || (echo "cannot find the gh pages repo, exiting" && exit 1)
+          test -d "$GITHUB_WORKSPACE/github-pages/archlinux" || (echo "cannot find the gh pages repo, exiting" && exit 1)
+          # update manifest with workspace path
+          sed -i "s|repository: .*|repository: $GITHUB_WORKSPACE/github-pages/archlinux/custom.db.tar.gz|" ../build-pacman-repo.yaml
           build-pacman-repo build
           tree -lah pkgbuilds/
+        working-directory: repo
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
 
       - name: Copy packages to GitHub Pages
         run: |
           # first, check if we have a db file
           test -f pkgbuilds/custom.db.tar.gz || (echo "No packages built, skipping copy step" && exit 1)
-          cp -f pkgbuilds/* ../github-pages/archlinux/
+          cp -f pkgbuilds/* "$GITHUB_WORKSPACE/github-pages/archlinux/"
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
 
         working-directory: repo
       - name: GitHub Commit & Push
