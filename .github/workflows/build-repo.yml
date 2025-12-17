@@ -84,7 +84,7 @@ jobs:
           # ensure github-pages/archlinux directory exists, if not, we can't copy files later
           test -d "$GITHUB_WORKSPACE/github-pages/archlinux" || (echo "cannot find the gh pages repo, exiting" && exit 1)
           # update manifest with workspace path
-          sed -i "s|repository: .*|repository: $GITHUB_WORKSPACE/github-pages/archlinux/custom.db.tar.gz|" ../build-pacman-repo.yaml
+          sed -i "s|repository: .*|repository: $GITHUB_WORKSPACE/github-pages/archlinux/custom.db.tar.gz|" build-pacman-repo.yaml
           build-pacman-repo build
           tree -lah pkgbuilds/
         working-directory: repo
