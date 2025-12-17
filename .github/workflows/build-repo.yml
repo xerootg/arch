@@ -79,8 +79,6 @@ jobs:
       - name: Build Pacman Repo
         run: |
           test -d ../github-pages/archlinux
-          mkdir -p github-pages
-          ln -s ../github-pages/archlinux github-pages/archlinux
           build-pacman-repo build
         working-directory: repo
       - name: GitHub Commit & Push
