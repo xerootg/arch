@@ -31,10 +31,6 @@ jobs:
             rust \
             tree
 
-      - name: Update mirrors
-        run: |
-          reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
-
       - name: Checkout Pacman Repo Builder
         uses: actions/checkout@v4
         with:
@@ -76,6 +72,10 @@ jobs:
         run: |
           build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
         working-directory: repo
+
+      - name: Update mirrors
+        run: |
+          reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
 
       - name: Build Pacman Repo
         run: |
