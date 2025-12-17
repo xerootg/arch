@@ -95,11 +95,7 @@ jobs:
 
       - name: Update SRCINFO for git packages
         run: |
-          for dir in pkgbuilds/*; do
-            if [ -d "$dir" ]; then
-              (cd "$dir" && makepkg --printsrcinfo > .SRCINFO)
-            fi
-          done
+          build-pacman-repo sync-srcinfo --update
         working-directory: repo
 
       - name: Build Pacman Repo
