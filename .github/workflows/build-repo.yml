@@ -39,25 +39,20 @@ jobs:
         with:
           repository: pacman-repo-builder/pacman-repo-builder
           path: pacman-repo-builder
-
-      - name: Build Pacman Repo Builder
-        run: |
-          cd pacman-repo-builder
-          cargo update
-          cargo build --release
-          cp target/release/build-pacman-repo /usr/bin/build-pacman-repo
-          chmod +x /usr/bin/build-pacman-repo
-
-      - name: Checkout
+      
+      - name: Checkout this repo
         uses: actions/checkout@v4
+        with:
+          submodules: true
+          path: repo
 
-      - name: Get GitHub App token
+      - name: Get GitHub App token for GitHub Pages
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.PAGES_BOT_APP_ID }}
           private-key: ${{ secrets.PAGES_BOT_PRIVATE_KEY }}
-
+      
       - name: Checkout GitHub Pages Repo
         uses: actions/checkout@v4
         with:
@@ -68,8 +63,37 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: set the working directory
+        run: cd pacman-repo-builder
+
+      - name: Install toolchain
+        uses: ./ci/github-actions/arch-run
+        with:
+          command: rustup target add x86_64-unknown-linux-gnu
+          
+      - name: Update dependencies
+        uses: ./ci/github-actions/arch-run
+        with:
+          command: cargo update
+
+      - name: Build
+        uses: ./ci/github-actions/arch-run
+        with:
+          command: cargo build --target x86_64-unknown-linux-gnu
+
+      - name: Copy built binary to working directory
+        uses: ./ci/github-actions/arch-run
+        with:
+          command: cp target/x86_64-unknown-linux-gnu/debug/build-pacman-repo .
+        
+      - name: Install build-pacman-repo
+        run: |
+          install -Dm755 build-pacman-repo /usr/local/bin/build-pacman-repo
+
       - name: Build Pacman Repo
         run: |
+          # set the working directory
+          cd ../repo
           build-pacman-repo patch-makepkg --replace
           build-pacman-repo build
 
