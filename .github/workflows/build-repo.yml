@@ -79,6 +79,13 @@ jobs:
           build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
         working-directory: repo
 
+      - name: Install yay
+        run: |
+          git clone https://aur.archlinux.org/yay.git yay
+          cd yay
+          makepkg -si --noconfirm
+        working-directory: repo
+
       - name: Build Pacman Repo
         run: |
           # update mirrorlist to use fastest mirrors
