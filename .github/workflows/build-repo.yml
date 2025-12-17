@@ -95,19 +95,49 @@ jobs:
 
       - name: Update SRCINFO for git packages
         run: |
-          build-pacman-repo sync-srcinfo --update
+          echo "🔄 Checking for outdated .SRCINFO files..."
+          echo "Packages in manifest:"
+          grep -E "^\s*- directory:" build-pacman-repo.yaml || true
+
+          # sync-srcinfo prints directories that were updated to stdout
+          # If nothing is printed, all .SRCINFO files are already up-to-date
+          UPDATED=$(build-pacman-repo sync-srcinfo --update 2>&1)
+
+          if [ -z "$UPDATED" ]; then
+            echo "✅ All .SRCINFO files are already up-to-date"
+          else
+            echo "📝 Updated .SRCINFO files for:"
+            echo "$UPDATED"
+          fi
         working-directory: repo
 
+      - name: Check for outdated packages
+        id: check-outdated
+        run: |
+          # update manifest with workspace path first (needed for outdated check)
+          sed -i "s|repository: .*|repository: $GITHUB_WORKSPACE/github-pages/archlinux/custom.db.tar.gz|" build-pacman-repo.yaml
+
+          OUTDATED=$(build-pacman-repo outdated --details pkgname)
+          if [ -z "$OUTDATED" ]; then
+            echo "✅ All packages are up-to-date, nothing to build"
+            echo "has_outdated=false" >> $GITHUB_OUTPUT
+          else
+            echo "📦 Outdated packages to build:"
+            echo "$OUTDATED"
+            echo "has_outdated=true" >> $GITHUB_OUTPUT
+          fi
+        working-directory: repo
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+
       - name: Build Pacman Repo
+        if: steps.check-outdated.outputs.has_outdated == 'true'
         run: |
           # update mirrorlist to use fastest mirrors
           reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
 
           # ensure github-pages/archlinux directory exists, if not, we can't copy files later
           test -d "$GITHUB_WORKSPACE/github-pages/archlinux" || (echo "cannot find the gh pages repo, exiting" && exit 1)
-
-          # update manifest with workspace path
-          sed -i "s|repository: .*|repository: $GITHUB_WORKSPACE/github-pages/archlinux/custom.db.tar.gz|" build-pacman-repo.yaml
 
           # run the build, fail if build fails, and show pkgbuilds tree for debugging
           build-pacman-repo build || (echo "build-pacman-repo failed" && tree -lah pkgbuilds/ && exit 2)
@@ -116,6 +146,7 @@ jobs:
           GITHUB_WORKSPACE: ${{ github.workspace }}
 
       - name: Copy packages to GitHub Pages
+        if: steps.check-outdated.outputs.has_outdated == 'true'
         run: |
           REPO_DIR="$GITHUB_WORKSPACE/github-pages/archlinux"
           DB_FILE="$REPO_DIR/custom.db.tar.gz"
@@ -148,7 +179,7 @@ jobs:
 
         working-directory: repo
       - name: GitHub Commit & Push
-        if: github.event_name == 'schedule' || github.event_name == 'push'
+        if: steps.check-outdated.outputs.has_outdated == 'true' && (github.event_name == 'schedule' || github.event_name == 'push')
         uses: actions-js/push@v1.5
         with:
           author_email: ${{ secrets.GH_BOT_EMAIL }}
