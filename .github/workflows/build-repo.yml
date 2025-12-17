@@ -17,31 +17,7 @@ jobs:
   build-pacman-repo:
     runs-on: ubuntu-latest
     environment: prod
-    container:
-      image: archlinux:base-devel
     steps:
-      - name: Container Setup
-        run: |
-          pacman -Syu --disable-download-timeout --needed --noconfirm \
-            archlinux-keyring \
-            git \
-            reflector \
-            wget
-
-      - name: Update mirrors
-        run: |
-          reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
-
-      - name: Download Pacman Repo Builder
-        env:
-          VERSION: "0.0.0-rc.65"
-          URL_ASSET: "build-pacman-repo-x86_64-unknown-linux-gnu"
-        run: |
-          wget \
-            "https://github.com/pacman-repo-builder/pacman-repo-builder/releases/download/${VERSION}/${URL_ASSET}" \
-            -O /usr/bin/build-pacman-repo
-          chmod +x /usr/bin/build-pacman-repo
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -62,10 +38,15 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Patch makepkg
+        uses: pacman-repo-builder/action@v1
+        with:
+          command: build-pacman-repo patch-makepkg --replace
+
       - name: Build Pacman Repo
-        run: |
-          build-pacman-repo patch-makepkg --replace
-          build-pacman-repo build
+        uses: pacman-repo-builder/action@v1
+        with:
+          command: build-pacman-repo build
 
       - name: Copy packages to GitHub Pages
         run: |
