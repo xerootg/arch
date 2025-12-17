@@ -79,14 +79,17 @@ jobs:
 
       - name: Build Pacman Repo
         run: |
-          test -d ../github-pages/archlinux
+          # temporarily delete the orca-slicer-git submodule if it exists
+          test -d pkgbuilds/orca-slicer-git && rm -rf pkgbuilds/orca-slicer-git || echo "orca-slicer-git submodule not present, continuing"
+          # ensure github-pages/archlinux directory exists, if not, we can't copy files later
+          test -d ../github-pages/archlinux || (echo "cannot find the gh pages repo, exiting" && exit 1)
           build-pacman-repo build
           tree -lah pkgbuilds/
 
       - name: Copy packages to GitHub Pages
         run: |
           # first, check if we have a db file
-          test -f pkgbuilds/custom.db.tar.gz || (echo "No packages built, skipping copy step" && exit 0)
+          test -f pkgbuilds/custom.db.tar.gz || (echo "No packages built, skipping copy step" && exit 1)
           cp -f pkgbuilds/* ../github-pages/archlinux/
 
         working-directory: repo
