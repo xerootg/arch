@@ -18,5 +18,7 @@ members:
   - directory: libfprint-elanmoc2-slg3-git
   - directory: orca-slicer-git
     pacman: yay
+    allow-failure: true
   - directory: imhex
     pacman: yay
+    allow-failure: true
