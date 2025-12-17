@@ -1,0 +1,84 @@
+---
+name: Build Pacman Repo
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "0 0 * * *"
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  build-pacman-repo:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Container Setup
+        run: |
+          pacman -Syu --disable-download-timeout --needed --noconfirm \
+            archlinux-keyring \
+            git \
+            reflector \
+            wget
+
+      - name: Update mirrors
+        run: |
+          reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
+
+      - name: Download Pacman Repo Builder
+        env:
+          VERSION: "0.0.0-rc.65"
+          URL_ASSET: "build-pacman-repo-x86_64-unknown-linux-gnu"
+        run: |
+          wget \
+            "https://github.com/pacman-repo-builder/pacman-repo-builder/releases/download/${VERSION}/${URL_ASSET}" \
+            -O /usr/bin/build-pacman-repo
+          chmod +x /usr/bin/build-pacman-repo
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.PAGES_BOT_APP_ID }}
+          private-key: ${{ secrets.PAGES_BOT_PRIVATE_KEY }}
+
+      - name: Checkout GitHub Pages Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/${{ github.repository_owner }}.github.io
+          ref: main
+          path: github-pages
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Build Pacman Repo
+        run: |
+          build-pacman-repo patch-makepkg --replace
+          build-pacman-repo build
+
+      - name: Copy packages to GitHub Pages
+        run: |
+          mkdir -p github-pages/archlinux
+          cp -f pkgbuilds/*.pkg.tar.zst github-pages/archlinux/ 2>/dev/null || true
+
+      - name: GitHub Commit & Push
+        if: github.event_name == 'schedule' || github.event_name == 'push'
+        uses: actions-js/push@v1.5
+        with:
+          author_email: ${{ secrets.GH_BOT_EMAIL }}
+          author_name: ${{ secrets.GH_BOT_NAME }}
+          repository: ${{ github.repository_owner }}/${{ github.repository_owner }}.github.io
+          branch: main
+          directory: github-pages
+          github_token: ${{ steps.app-token.outputs.token }}
+          message: 'Update per ${{ github.event_name }}: ${{ github.sha }}'

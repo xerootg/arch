@@ -1,0 +1,19 @@
+---
+global-settings:
+  repository: github-pages/archlinux/custom.db.tar.gz
+  container: pkgbuilds
+  read-build-metadata: either
+  record-failed-builds: failed-builds.yaml
+  install-missing-dependencies: true
+  clean-before-build: false
+  clean-after-build: false
+  force-rebuild: true
+  pacman: pacman
+  arch-filter: [x86_64]
+  check: inherit
+  packager: xerootg <4009802+xerootg@users.noreply.github.com>
+  allow-failure: false
+  dereference-database-symlinks: true
+members:
+  - directory: libfprint-elanmoc2-slg3-git
+    read-build-metadata: pkgbuild
