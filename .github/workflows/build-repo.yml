@@ -75,20 +75,19 @@ jobs:
           build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
         working-directory: repo
 
-      # - name: Update mirrors
-      #   run: |
-      #     reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
-
       - name: Build Pacman Repo
         run: |
-          # temporarily delete the orca-slicer-git submodule if it exists
-          test -d pkgbuilds/orca-slicer-git && rm -rf pkgbuilds/orca-slicer-git || echo "orca-slicer-git submodule not present, continuing"
+          # update mirrorlist to use fastest mirrors
+          reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
+
           # ensure github-pages/archlinux directory exists, if not, we can't copy files later
           test -d "$GITHUB_WORKSPACE/github-pages/archlinux" || (echo "cannot find the gh pages repo, exiting" && exit 1)
+
           # update manifest with workspace path
           sed -i "s|repository: .*|repository: $GITHUB_WORKSPACE/github-pages/archlinux/custom.db.tar.gz|" build-pacman-repo.yaml
-          build-pacman-repo build
-          tree -lah pkgbuilds/
+
+          # run the build, fail if build fails, and show pkgbuilds tree for debugging
+          build-pacman-repo build || (echo "build-pacman-repo failed" && tree -lah pkgbuilds/ && exit 2)
         working-directory: repo
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
@@ -111,7 +110,6 @@ jobs:
           find pkgbuilds -maxdepth 2 -name "*.pkg.tar.zst" -exec cp {} "$REPO_DIR/" \;
 
           # create or update the database with repo-add
-
           if [ ! -f "$DB_FILE" ]; then
             echo "WARNING: Database not found, creating new one with repo-add"
           fi

@@ -16,4 +16,4 @@ global-settings:
   dereference-database-symlinks: true
 members:
   - directory: libfprint-elanmoc2-slg3-git
-  # - directory: orca-slicer-git
+  - directory: orca-slicer-git
