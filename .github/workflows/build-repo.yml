@@ -28,7 +28,7 @@ jobs:
             git \
             reflector \
             wget \
-            cargo
+            rust
 
       - name: Update mirrors
         run: |
@@ -65,10 +65,9 @@ jobs:
 
       - name: Build and Install build-pacman-repo
         run: |
-          rustup target add x86_64-unknown-linux-gnu
-          cargo update -vv --recursive
-          cargo build --release --target x86_64-unknown-linux-gnu
-          install -Dm755 target/x86_64-unknown-linux-gnu/release/build-pacman-repo /usr/local/bin/build-pacman-repo
+          cargo update -vv
+          cargo build --release
+          install -Dm755 target/release/build-pacman-repo /usr/local/bin/build-pacman-repo
         working-directory: pacman-repo-builder
 
       - name: Build Pacman Repo
