@@ -38,10 +38,14 @@ jobs:
           path: pacman-repo-builder
 
       - name: Checkout this repo
-        uses: actions/checkout@v6
+        uses: nick-fields/retry@v3
         with:
-          submodules: true
-          path: repo
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: |
+            git clone --recurse-submodules https://github.com/${{ github.repository }}.git repo || \
+            (cd repo && git submodule update --init --recursive)
 
       - name: Get GitHub App token for GitHub Pages
         id: app-token
