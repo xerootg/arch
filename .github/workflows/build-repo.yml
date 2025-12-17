@@ -28,7 +28,8 @@ jobs:
             git \
             reflector \
             wget \
-            rust
+            rust \
+            tree
 
       - name: Update mirrors
         run: |
@@ -80,6 +81,14 @@ jobs:
         run: |
           test -d ../github-pages/archlinux
           build-pacman-repo build
+          tree -lah pkgbuilds/
+
+      - name: Copy packages to GitHub Pages
+        run: |
+          # first, check if we have a db file
+          test -f pkgbuilds/custom.db.tar.gz || (echo "No packages built, skipping copy step" && exit 0)
+          cp -f pkgbuilds/* ../github-pages/archlinux/
+
         working-directory: repo
       - name: GitHub Commit & Push
         if: github.event_name == 'schedule' || github.event_name == 'push'
