@@ -17,3 +17,5 @@ global-settings:
 members:
   - directory: libfprint-elanmoc2-slg3-git
     read-build-metadata: pkgbuild
+  - directory: orca-slicer-git
+    read-build-metadata: pkgbuild

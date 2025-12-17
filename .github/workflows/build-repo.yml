@@ -27,7 +27,8 @@ jobs:
             base-devel \
             git \
             reflector \
-            wget
+            wget \
+            cargo
 
       - name: Update mirrors
         run: |
