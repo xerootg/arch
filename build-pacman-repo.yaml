@@ -5,8 +5,8 @@ global-settings:
   read-build-metadata: srcinfo # or "pkgbuild" or "either"
   record-failed-builds: failed-builds.yaml
   install-missing-dependencies: true
-  clean-before-build: false
-  clean-after-build: false
+  clean-before-build: true
+  clean-after-build: true
   force-rebuild: false
   pacman: pacman
   arch-filter: [x86_64]

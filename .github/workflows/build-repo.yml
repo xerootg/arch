@@ -93,30 +93,49 @@ jobs:
           makepkg -si --noconfirm
         working-directory: yay
 
-      - name: Update SRCINFO for git packages
+      - name: Prepare sources and update SRCINFO
         run: |
-          echo "🔄 Checking for outdated .SRCINFO files..."
-          echo "Packages in manifest:"
-          grep -E "^\s*- directory:" build-pacman-repo.yaml || true
+          # update manifest with workspace path first (needed for outdated check)
+          sed -i "s|repository: .*|repository: $GITHUB_WORKSPACE/github-pages/archlinux/custom.db.tar.gz|" build-pacman-repo.yaml
 
-          # sync-srcinfo prints directories that were updated to stdout
-          # If nothing is printed, all .SRCINFO files are already up-to-date
-          UPDATED=$(build-pacman-repo sync-srcinfo --update 2>&1)
+          # Fetch sources for packages with pkgver() so version can be determined
+          for dir in pkgbuilds/*/; do
+            if grep -q "^pkgver()" "$dir/PKGBUILD" 2>/dev/null; then
+              echo "📥 Fetching sources for $(basename "$dir")..."
+              (cd "$dir" && makepkg -od --nobuild --noconfirm) || true
+            fi
+          done
 
-          if [ -z "$UPDATED" ]; then
-            echo "✅ All .SRCINFO files are already up-to-date"
-          else
-            echo "📝 Updated .SRCINFO files for:"
-            echo "$UPDATED"
-          fi
+          # Update .SRCINFO files with accurate versions
+          echo "🔄 Updating .SRCINFO files..."
+          build-pacman-repo sync-srcinfo --update
+
+          # echo all .SRCINFO files for debugging
+          echo "📄 Current .SRCINFO files:"
+          find pkgbuilds -name ".SRCINFO" -exec cat {} \;
+
+          # now clean up any downloaded sources to save space
+          for dir in pkgbuilds/*/; do
+            # do a clean to remove sources
+            if [ -f "$dir/PKGBUILD" ]; then
+              echo "🧹 Cleaning sources for $(basename "$dir")..."
+              (cd "$dir" && makepkg -odc --noconfirm) || true
+            fi
+          done
         working-directory: repo
 
       - name: Check for outdated packages
         id: check-outdated
         run: |
-          # update manifest with workspace path first (needed for outdated check)
-          sed -i "s|repository: .*|repository: $GITHUB_WORKSPACE/github-pages/archlinux/custom.db.tar.gz|" build-pacman-repo.yaml
+          echo ""
+          echo "🔍 Debug: Existing packages in repo directory:"
+          ls -1 "$GITHUB_WORKSPACE/github-pages/archlinux/"*.pkg.tar.zst 2>/dev/null | xargs -I{} basename {} || echo "  (none)"
 
+          echo ""
+          echo "🔍 Debug: Running outdated check with full details:"
+          build-pacman-repo outdated --details lossy-yaml || true
+
+          echo ""
           OUTDATED=$(build-pacman-repo outdated --details pkgname)
           if [ -z "$OUTDATED" ]; then
             echo "✅ All packages are up-to-date, nothing to build"
