@@ -86,6 +86,12 @@ jobs:
       - name: Patch makepkg
         run: |
           build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
+
+          # Use maximum zstd compression to reduce package sizes
+          sed -i "s/COMPRESSZST=.*/COMPRESSZST=(zstd -c -T0 --ultra -20 -)/" /etc/makepkg.conf
+          
+          # Disable debug packages globally (they're huge and exceed GitHub's 100MB limit)
+          sed -i 's/OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/' /etc/makepkg.conf
         working-directory: repo
 
       - name: Install yay
