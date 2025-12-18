@@ -170,39 +170,29 @@ jobs:
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
 
-      - name: Copy packages to GitHub Pages
+      - name: Verify packages and update database
         if: steps.check-outdated.outputs.has_outdated == 'true'
         run: |
           REPO_DIR="$GITHUB_WORKSPACE/github-pages/archlinux"
           DB_FILE="$REPO_DIR/custom.db.tar.gz"
 
-          # copy all built packages from pkgbuilds subdirectories to github-pages/archlinux
+          # build-pacman-repo already copies packages to the repo directory
+          # Just verify they're there and ensure database is up to date
+          echo "📦 Packages in repository:"
+          ls -lah "$REPO_DIR/"*.pkg.tar.zst 2>/dev/null || echo "  (none found)"
 
-          PKG_COUNT=$(find pkgbuilds -maxdepth 2 -name "*.pkg.tar.zst" | wc -l)
-
-
+          PKG_COUNT=$(find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst" | wc -l)
           if [ "$PKG_COUNT" -eq 0 ]; then
-            echo "ERROR: No packages found to copy"
+            echo "ERROR: No packages found in repository"
             exit 3
           fi
 
-          find pkgbuilds -maxdepth 2 -name "*.pkg.tar.zst" -exec cp {} "$REPO_DIR/" \;
-
-          # create or update the database with repo-add
-          if [ ! -f "$DB_FILE" ]; then
-            echo "WARNING: Database not found, creating new one with repo-add"
-          fi
-
-          # add all packages to the database (repo-add creates it if missing)
-          for pkg in "$REPO_DIR"/*.pkg.tar.zst; do
-            [ -f "$pkg" ] && repo-add "$DB_FILE" "$pkg"
-          done
-
-          ls -lah "$REPO_DIR/"
+          echo "✅ Found $PKG_COUNT package(s):"
+          find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst" -exec basename {} \;
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
-
         working-directory: repo
+
       - name: GitHub Commit & Push
         if: steps.check-outdated.outputs.has_outdated == 'true' && (github.event_name == 'schedule' || github.event_name == 'push')
         uses: actions-js/push@v1.5
