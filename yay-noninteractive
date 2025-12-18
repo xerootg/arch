@@ -1,0 +1,4 @@
+#!/bin/bash
+# Wrapper script for yay to run non-interactively in CI environments
+# This avoids prompts for provider selection and other interactive choices
+exec yay --noconfirm --answerdiff None --answerclean None --answeredit None --removemake --nopgpfetch "$@"

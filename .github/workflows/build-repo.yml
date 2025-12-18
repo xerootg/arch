@@ -99,6 +99,11 @@ jobs:
           makepkg -si --noconfirm
         working-directory: yay
 
+      - name: Setup yay wrapper for non-interactive use
+        run: |
+          chmod +x yay-noninteractive
+        working-directory: repo
+
       - name: Prepare sources and update SRCINFO
         run: |
           # update manifest with workspace path first (needed for outdated check)

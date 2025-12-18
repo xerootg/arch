@@ -17,8 +17,8 @@ global-settings:
 members:
   - directory: libfprint-elanmoc2-slg3-git
   - directory: orca-slicer-git
-    pacman: yay
+    pacman: ./yay-noninteractive
     allow-failure: true
   - directory: imhex
-    pacman: yay
+    pacman: ./yay-noninteractive
     allow-failure: true
