@@ -16,9 +16,11 @@ global-settings:
   dereference-database-symlinks: true
 members:
   - directory: libfprint-elanmoc2-slg3-git
+  - directory: ttf-nanum
+    pacman: yay
   - directory: orca-slicer-git
-    pacman: ./yay-noninteractive
+    pacman: yay
     allow-failure: true
   - directory: imhex
-    pacman: ./yay-noninteractive
+    pacman: yay
     allow-failure: true

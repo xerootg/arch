@@ -7,3 +7,6 @@
 [submodule "pkgbuilds/imhex"]
 	path = pkgbuilds/imhex
 	url = https://aur.archlinux.org/imhex.git
+[submodule "pkgbuilds/ttf-nanum"]
+	path = pkgbuilds/ttf-nanum
+	url = https://aur.archlinux.org/ttf-nanum.git
