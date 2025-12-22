@@ -14,8 +14,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  free-disk-space:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free up disk space
+        run: |
+          echo "🧹 Freeing up disk space on runner..."
+          df -h /
+
+          # Remove large unnecessary packages
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/share/swift
+
+          # Docker images
+          sudo docker image prune -a -f || true
+
+          # apt cache
+          sudo apt-get clean || true
+
+          echo "✅ Disk space after cleanup:"
+          df -h /
+
   build-pacman-repo:
-    runs-on: ubuntu-slim
+    needs: free-disk-space
+    runs-on: ubuntu-latest
     environment: prod
     container:
       image: archlinux:base-devel
@@ -89,7 +115,7 @@ jobs:
 
           # Use maximum zstd compression to reduce package sizes
           sed -i "s/COMPRESSZST=.*/COMPRESSZST=(zstd -c -T0 --ultra -20 -)/" /etc/makepkg.conf
-          
+
           # Disable debug packages globally (they're huge and exceed GitHub's 100MB limit)
           sed -i 's/OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/' /etc/makepkg.conf
         working-directory: repo
