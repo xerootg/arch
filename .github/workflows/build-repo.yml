@@ -14,48 +14,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  free-disk-space:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Free up disk space
-        run: |
-          echo "🧹 Freeing up disk space on runner..."
-          df -h /
-
-          # Remove large unnecessary packages
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/share/swift
-
-          # Docker images
-          sudo docker image prune -a -f || true
-
-          # apt cache
-          sudo apt-get clean || true
-
-          echo "✅ Disk space after cleanup:"
-          df -h /
-
   build-pacman-repo:
-    needs: free-disk-space
     runs-on: ubuntu-latest
     environment: prod
-    container:
-      image: archlinux:base-devel
     steps:
-      - name: Container Setup
-        run: |
-          pacman -Syu --disable-download-timeout --needed --noconfirm \
-            archlinux-keyring \
-            base-devel \
-            git \
-            reflector \
-            wget \
-            rust \
-            tree
+      - name: Free Disk Space (Ubuntu)
+        uses: BRAINSia/free-disk-space@v2
+        with:
+          # this might remove tools that are actually needed,
+          # if set to "true" but frees about 6 GB
+          tool-cache: false
+
+          # all of these default to true, but feel free to set to
+          # "false" if necessary for your workflow
+          mandb: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
 
       - name: Checkout Pacman Repo Builder
         uses: actions/checkout@v6
@@ -101,128 +79,123 @@ jobs:
           persist-credentials: true
           fetch-depth: 0
 
-      - name: Build and Install build-pacman-repo
+      - name: Run build in Arch Linux container
         run: |
-          sed -i 's/alpm = "[^"]*"/alpm = "*"/' Cargo.toml
-          cargo update -p alpm --aggressive
-          cargo build --release || (cargo fix --lib -p pacman-repo-builder && cargo build --release)
-          install -Dm755 target/release/build-pacman-repo /usr/local/bin/build-pacman-repo
-        working-directory: pacman-repo-builder
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -v "/etc/pacman.d:/host-pacman.d" \
+            -e GITHUB_WORKSPACE=/workspace \
+            -e GITHUB_OUTPUT=/workspace/.github-output \
+            -w /workspace \
+            archlinux:base-devel \
+            bash -c '
+              set -e
+              
+              # Container setup
+              pacman -Syu --disable-download-timeout --needed --noconfirm \
+                archlinux-keyring \
+                base-devel \
+                git \
+                reflector \
+                wget \
+                rust \
+                tree
 
-      - name: Patch makepkg
-        run: |
-          build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
+              # Build and install build-pacman-repo
+              cd /workspace/pacman-repo-builder
+              sed -i "s/alpm = \"[^\"]*\"/alpm = \"*\"/" Cargo.toml
+              cargo update -p alpm --aggressive
+              cargo build --release || (cargo fix --lib -p pacman-repo-builder && cargo build --release)
+              install -Dm755 target/release/build-pacman-repo /usr/local/bin/build-pacman-repo
 
-          # Use maximum zstd compression to reduce package sizes
-          sed -i "s/COMPRESSZST=.*/COMPRESSZST=(zstd -c -T0 --ultra -20 -)/" /etc/makepkg.conf
+              # Patch makepkg
+              cd /workspace/repo
+              build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
+              sed -i "s/COMPRESSZST=.*/COMPRESSZST=(zstd -c -T0 --ultra -20 -)/" /etc/makepkg.conf
+              sed -i "s/OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/" /etc/makepkg.conf
 
-          # Disable debug packages globally (they're huge and exceed GitHub's 100MB limit)
-          sed -i 's/OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/' /etc/makepkg.conf
-        working-directory: repo
+              # Install yay (needs a non-root user)
+              useradd -m builder
+              echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+              chown -R builder:builder /workspace
+              cd /workspace/yay
+              su builder -c "makepkg -si --noconfirm"
 
-      - name: Install yay
-        run: |
-          makepkg -si --noconfirm
-        working-directory: yay
+              # Setup yay wrapper
+              cd /workspace/repo
+              chmod +x yay-noninteractive
 
-      - name: Setup yay wrapper for non-interactive use
-        run: |
-          chmod +x yay-noninteractive
-        working-directory: repo
+              # Prepare sources and update SRCINFO
+              sed -i "s|repository: .*|repository: /workspace/github-pages/archlinux/custom.db.tar.gz|" build-pacman-repo.yaml
+              
+              for dir in pkgbuilds/*/; do
+                if grep -q "^pkgver()" "$dir/PKGBUILD" 2>/dev/null; then
+                  echo "📥 Fetching sources for $(basename "$dir")..."
+                  chown -R builder:builder "$dir"
+                  (cd "$dir" && su builder -c "makepkg -od --nobuild --noconfirm") || true
+                fi
+              done
+              
+              echo "🔄 Updating .SRCINFO files..."
+              build-pacman-repo sync-srcinfo --update
+              
+              echo "📄 Current .SRCINFO files:"
+              find pkgbuilds -name ".SRCINFO" -exec cat {} \;
+              
+              for dir in pkgbuilds/*/; do
+                if [ -f "$dir/PKGBUILD" ]; then
+                  echo "🧹 Cleaning sources for $(basename "$dir")..."
+                  (cd "$dir" && su builder -c "makepkg -odc --noconfirm") || true
+                fi
+              done
 
-      - name: Prepare sources and update SRCINFO
-        run: |
-          # update manifest with workspace path first (needed for outdated check)
-          sed -i "s|repository: .*|repository: $GITHUB_WORKSPACE/github-pages/archlinux/custom.db.tar.gz|" build-pacman-repo.yaml
+              # Check for outdated packages
+              echo ""
+              echo "🔍 Debug: Existing packages in repo directory:"
+              ls -1 /workspace/github-pages/archlinux/*.pkg.tar.zst 2>/dev/null | xargs -I{} basename {} || echo "  (none)"
+              
+              echo ""
+              echo "🔍 Debug: Running outdated check with full details:"
+              build-pacman-repo outdated --details lossy-yaml || true
+              
+              echo ""
+              OUTDATED=$(build-pacman-repo outdated --details pkgname)
+              if [ -z "$OUTDATED" ]; then
+                echo "✅ All packages are up-to-date, nothing to build"
+                echo "has_outdated=false" >> /workspace/.github-output
+              else
+                echo "📦 Outdated packages to build:"
+                echo "$OUTDATED"
+                echo "has_outdated=true" >> /workspace/.github-output
+                
+                # Build if outdated
+                reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
+                test -d /workspace/github-pages/archlinux || (echo "cannot find the gh pages repo, exiting" && exit 1)
+                chown -R builder:builder /workspace
+                su builder -c "build-pacman-repo build" || (echo "build-pacman-repo failed" && tree -lah pkgbuilds/ && exit 2)
+                
+                # Verify packages
+                REPO_DIR="/workspace/github-pages/archlinux"
+                echo "📦 Packages in repository:"
+                ls -lah "$REPO_DIR/"*.pkg.tar.zst 2>/dev/null || echo "  (none found)"
+                PKG_COUNT=$(find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst" | wc -l)
+                if [ "$PKG_COUNT" -eq 0 ]; then
+                  echo "ERROR: No packages found in repository"
+                  exit 3
+                fi
+                echo "✅ Found $PKG_COUNT package(s):"
+                find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst" -exec basename {} \;
+              fi
+            '
 
-          # Fetch sources for packages with pkgver() so version can be determined
-          for dir in pkgbuilds/*/; do
-            if grep -q "^pkgver()" "$dir/PKGBUILD" 2>/dev/null; then
-              echo "📥 Fetching sources for $(basename "$dir")..."
-              (cd "$dir" && makepkg -od --nobuild --noconfirm) || true
-            fi
-          done
-
-          # Update .SRCINFO files with accurate versions
-          echo "🔄 Updating .SRCINFO files..."
-          build-pacman-repo sync-srcinfo --update
-
-          # echo all .SRCINFO files for debugging
-          echo "📄 Current .SRCINFO files:"
-          find pkgbuilds -name ".SRCINFO" -exec cat {} \;
-
-          # now clean up any downloaded sources to save space
-          for dir in pkgbuilds/*/; do
-            # do a clean to remove sources
-            if [ -f "$dir/PKGBUILD" ]; then
-              echo "🧹 Cleaning sources for $(basename "$dir")..."
-              (cd "$dir" && makepkg -odc --noconfirm) || true
-            fi
-          done
-        working-directory: repo
-
-      - name: Check for outdated packages
+      - name: Read build output
         id: check-outdated
         run: |
-          echo ""
-          echo "🔍 Debug: Existing packages in repo directory:"
-          ls -1 "$GITHUB_WORKSPACE/github-pages/archlinux/"*.pkg.tar.zst 2>/dev/null | xargs -I{} basename {} || echo "  (none)"
-
-          echo ""
-          echo "🔍 Debug: Running outdated check with full details:"
-          build-pacman-repo outdated --details lossy-yaml || true
-
-          echo ""
-          OUTDATED=$(build-pacman-repo outdated --details pkgname)
-          if [ -z "$OUTDATED" ]; then
-            echo "✅ All packages are up-to-date, nothing to build"
-            echo "has_outdated=false" >> $GITHUB_OUTPUT
+          if [ -f .github-output ]; then
+            cat .github-output >> $GITHUB_OUTPUT
           else
-            echo "📦 Outdated packages to build:"
-            echo "$OUTDATED"
-            echo "has_outdated=true" >> $GITHUB_OUTPUT
+            echo "has_outdated=false" >> $GITHUB_OUTPUT
           fi
-        working-directory: repo
-        env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}
-
-      - name: Build Pacman Repo
-        if: steps.check-outdated.outputs.has_outdated == 'true'
-        run: |
-          # update mirrorlist to use fastest mirrors
-          reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
-
-          # ensure github-pages/archlinux directory exists, if not, we can't copy files later
-          test -d "$GITHUB_WORKSPACE/github-pages/archlinux" || (echo "cannot find the gh pages repo, exiting" && exit 1)
-
-          # run the build, fail if build fails, and show pkgbuilds tree for debugging
-          build-pacman-repo build || (echo "build-pacman-repo failed" && tree -lah pkgbuilds/ && exit 2)
-        working-directory: repo
-        env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}
-
-      - name: Verify packages and update database
-        if: steps.check-outdated.outputs.has_outdated == 'true'
-        run: |
-          REPO_DIR="$GITHUB_WORKSPACE/github-pages/archlinux"
-          DB_FILE="$REPO_DIR/custom.db.tar.gz"
-
-          # build-pacman-repo already copies packages to the repo directory
-          # Just verify they're there and ensure database is up to date
-          echo "📦 Packages in repository:"
-          ls -lah "$REPO_DIR/"*.pkg.tar.zst 2>/dev/null || echo "  (none found)"
-
-          PKG_COUNT=$(find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst" | wc -l)
-          if [ "$PKG_COUNT" -eq 0 ]; then
-            echo "ERROR: No packages found in repository"
-            exit 3
-          fi
-
-          echo "✅ Found $PKG_COUNT package(s):"
-          find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst" -exec basename {} \;
-        env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}
-        working-directory: repo
 
       - name: GitHub Commit & Push
         if: steps.check-outdated.outputs.has_outdated == 'true' && (github.event_name == 'schedule' || github.event_name == 'push')
