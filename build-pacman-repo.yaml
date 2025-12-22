@@ -8,7 +8,7 @@ global-settings:
   clean-before-build: true
   clean-after-build: true
   force-rebuild: false
-  pacman: pacman
+  pacman: ./yay-noninteractive # script to work around yay interactive prompts
   arch-filter: [x86_64]
   check: inherit
   packager: xerootg <4009802+xerootg@users.noreply.github.com>
@@ -17,10 +17,7 @@ global-settings:
 members:
   - directory: libfprint-elanmoc2-slg3-git
   - directory: ttf-nanum
-    pacman: yay
   - directory: orca-slicer-git
-    pacman: yay
     allow-failure: true
   - directory: imhex
-    pacman: yay
     allow-failure: true
