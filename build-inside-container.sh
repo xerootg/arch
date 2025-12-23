@@ -12,10 +12,11 @@ pacman -Syu --disable-download-timeout --needed --noconfirm \
   rust \
   tree
 
-# Allow git to operate on repos owned by other users (for CI safety)
-git config --global --add safe.directory /workspace/yay
-git config --global --add safe.directory /workspace/pacman-repo-builder
-git config --global --add safe.directory /workspace/repo
+# git refuses to run if the files are not owned by the user running git
+# needed for pkginfo VCS stamping in makepkg
+chown -R $UID:$GID /workspace/yay
+chown -R $UID:$GID /workspace/pacman-repo-builder
+chown -R $UID:$GID /workspace/repo
 
 # Build and install build-pacman-repo
 cd /workspace/pacman-repo-builder
