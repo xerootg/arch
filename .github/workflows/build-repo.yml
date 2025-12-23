@@ -98,6 +98,15 @@ jobs:
             echo "has_outdated=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Refresh GitHub App token for push
+        id: app-token-fresh
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.PAGES_BOT_APP_ID }}
+          private-key: ${{ secrets.PAGES_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository_owner }}.github.io
+
       - name: GitHub Commit & Push
         if: steps.check-outdated.outputs.has_outdated == 'true' && (github.event_name == 'schedule' || github.event_name == 'push')
         uses: actions-js/push@v1.5
@@ -107,5 +116,5 @@ jobs:
           repository: ${{ github.repository_owner }}/${{ github.repository_owner }}.github.io
           branch: main
           directory: github-pages
-          github_token: ${{ steps.app-token.outputs.token }}
+          github_token: ${{ steps.app-token-fresh.outputs.token }}
           message: "Update per ${{ github.event_name }}: ${{ github.sha }}"
