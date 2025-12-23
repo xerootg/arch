@@ -13,27 +13,24 @@ pacman -Syu --disable-download-timeout --needed --noconfirm \
 
 # Build and install build-pacman-repo
 cd /workspace/pacman-repo-builder
-
-# patch alpm dependency to use the latest version for compatibility with the latest pacman
 sed -i "s/alpm = \"[^\"]*\"/alpm = \"*\"/" Cargo.toml
 cargo update -p alpm --aggressive
-
-# Try to build, if it fails try to fix and build again
 cargo build --release || (cargo fix --lib -p pacman-repo-builder && cargo build --release)
-
-# Install the built binary
 install -Dm755 target/release/build-pacman-repo /usr/local/bin/build-pacman-repo
 
 # Patch makepkg
 cd /workspace/repo
 build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
-
-# Configure makepkg to use zstd compression and strip debug symbols
 sed -i "s/COMPRESSZST=.*/COMPRESSZST=(zstd -c -T0 --ultra -20 -)/" /etc/makepkg.conf
 sed -i "s/OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/" /etc/makepkg.conf
 
 # Install yay as root
 cd /workspace/yay
+# Ensure .git is present for VCS stamping
+if [ ! -d .git ]; then
+  echo "ERROR: .git directory missing in /workspace/yay. VCS stamping will fail."
+  exit 10
+fi
 makepkg -si --noconfirm
 
 # Setup yay wrapper
