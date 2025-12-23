@@ -79,11 +79,14 @@ jobs:
           persist-credentials: true
           fetch-depth: 0
 
+      - name: Fix permissions # git will not run if the files are not owned by the user running git
+        run: |
+          sudo chown -R 0:0 ${{ github.workspace }}
+
       - name: Run build in Arch Linux container
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
-            -v "/etc/pacman.d:/host-pacman.d" \
             -e GITHUB_WORKSPACE=/workspace \
             -e GITHUB_OUTPUT=/workspace/.github-output \
             -w /workspace \

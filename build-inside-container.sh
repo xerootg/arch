@@ -26,22 +26,6 @@ sed -i "s/OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman p
 
 # Install yay as root
 cd /workspace/yay
-# Debug info: show Go/git versions, env and workspace contents
-echo "DEBUG: go version: $(go version 2>/dev/null || true)"
-echo "DEBUG: git version: $(git --version 2>/dev/null || true)"
-echo "DEBUG: GOFLAGS='$GOFLAGS'"
-echo "DEBUG: /workspace listing:"
-ls -la /workspace || true
-echo "DEBUG: /workspace/yay listing:"
-tree -lah /workspace/yay || true
-if [ -d .git ]; then
-  echo "DEBUG: .git exists; git diagnostics follow:"
-  git rev-parse --show-toplevel 2>/dev/null || true
-  git rev-parse HEAD 2>/dev/null || true
-  git status --porcelain 2>/dev/null || true
-  git ls-files | wc -l 2>/dev/null || true
-fi
-
 # Ensure .git is present for VCS stamping
 if [ ! -d .git ]; then
   echo "ERROR: .git directory missing in /workspace/yay. VCS stamping will fail."
