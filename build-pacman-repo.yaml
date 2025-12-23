@@ -1,6 +1,6 @@
 ---
 global-settings:
-  repository: ${PACMAN_REPO_OUTPUT:-../github-pages/archlinux/custom.db.tar.gz}
+  repository: /workspace/github-pages/archlinux/custom.db.tar.gz
   container: pkgbuilds
   read-build-metadata: srcinfo # or "pkgbuild" or "either"
   record-failed-builds: failed-builds.yaml
@@ -8,7 +8,7 @@ global-settings:
   clean-before-build: true
   clean-after-build: true
   force-rebuild: false
-  pacman: ./yay-noninteractive # script to work around yay interactive prompts
+  pacman: /workspace/repo/yay-noninteractive # script to work around yay interactive prompts
   arch-filter: [x86_64]
   check: inherit
   packager: xerootg <4009802+xerootg@users.noreply.github.com>
@@ -16,6 +16,7 @@ global-settings:
   dereference-database-symlinks: true
 members:
   - directory: libfprint-elanmoc2-slg3-git
+    pacman: pacman
   - directory: ttf-nanum
   - directory: orca-slicer-git
     allow-failure: true
