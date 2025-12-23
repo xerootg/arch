@@ -88,7 +88,7 @@ jobs:
             -e GITHUB_OUTPUT=/workspace/.github-output \
             -w /workspace \
             archlinux:base-devel \
-            bash /workspace/build-inside-container.sh
+            bash /workspace/repo/build-inside-container.sh
 
       - name: Read build output
         id: check-outdated
