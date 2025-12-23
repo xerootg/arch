@@ -12,6 +12,8 @@ pacman -Syu --disable-download-timeout --needed --noconfirm \
   rust \
   tree
 
+GID=$(id -g)
+
 # git refuses to run if the files are not owned by the user running git
 # needed for pkginfo VCS stamping in makepkg
 chown -R $UID:$GID /workspace/yay
