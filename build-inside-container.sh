@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
+
 set -e
+
+# Allow git to operate on repos owned by other users (for CI safety)
+git config --global --add safe.directory /workspace/yay
+git config --global --add safe.directory /workspace/pacman-repo-builder
+git config --global --add safe.directory /workspace/repo
 
 # Container setup
 pacman -Syu --disable-download-timeout --needed --noconfirm \
