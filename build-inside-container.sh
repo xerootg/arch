@@ -95,6 +95,8 @@ else
   build-pacman-repo build || (echo "build-pacman-repo failed" && tree -lah pkgbuilds/ -I "src|pkg|.git|.cache" && exit 2)
   # Verify packages
   REPO_DIR="/workspace/github-pages/archlinux"
+  echo ""
+  echo ""
   echo "📦 Packages in repository:"
   ls -lah "$REPO_DIR/"*.pkg.tar.zst 2>/dev/null || echo "  (none found)"
   PKG_COUNT=$(find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst" | wc -l)
@@ -103,5 +105,8 @@ else
     exit 3
   fi
   echo "✅ Found $PKG_COUNT package(s):"
-  find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst" -exec basename {} \;
+  find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst" | while read -r pkg; do
+    size_mb=$(du -m "$pkg" | cut -f1)
+    echo "$(basename "$pkg") - ${size_mb}MB"
+  done
 fi
