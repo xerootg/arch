@@ -85,6 +85,10 @@ else
   echo "📦 Outdated packages to build:"
   echo "$OUTDATED"
   echo "has_outdated=true" >> /workspace/.github-output
+  # Convert newline-separated package names to comma-separated list for commit message
+  PACKAGE_LIST=$(echo "$OUTDATED" | tr '\n' ',' | sed 's/,$//')
+  echo "packages=$PACKAGE_LIST" >> /workspace/.github-output
+  chmod ugo+r /workspace/.github-output
   # Build if outdated
   reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
   test -d /workspace/github-pages/archlinux || (echo "cannot find the gh pages repo, exiting" && exit 1)
