@@ -22,3 +22,4 @@ members:
     allow-failure: true
   - directory: imhex
     allow-failure: true
+  - directory: kwin-scripts-xeros-tiling-window-manager

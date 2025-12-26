@@ -51,14 +51,10 @@ jobs:
             git clone https://aur.archlinux.org/yay.git yay
 
       - name: Checkout this repo
-        uses: nick-fields/retry@v3
+        uses: actions/checkout@v6
         with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 10
-          command: |
-            git clone --recurse-submodules https://github.com/${{ github.repository }}.git repo || \
-            (cd repo && git submodule update --init --recursive)
+          path: repo
+          submodules: recursive
 
       - name: Checkout GitHub Pages Repo
         uses: actions/checkout@v6

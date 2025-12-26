@@ -10,7 +10,23 @@ pacman -Syu --disable-download-timeout --needed --noconfirm \
   reflector \
   wget \
   rust \
+  go \
   tree
+
+# Update mirrors with retry (after reflector is installed)
+echo "🔄 Updating mirror list..."
+for i in {1..5}; do
+  echo "  Attempt $i/5..."
+  if reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist 2>/dev/null; then
+    echo "✅ Mirror list updated successfully"
+    break
+  fi
+  if [ $i -eq 5 ]; then
+    echo "⚠️ Failed to update mirrors after 5 attempts, using existing mirrorlist"
+  else
+    sleep $((i * 5))
+  fi
+done
 
 GID=$(id -g)
 
@@ -90,7 +106,6 @@ else
   echo "packages=$PACKAGE_LIST" >> /workspace/.github-output
   chmod ugo+r /workspace/.github-output
   # Build if outdated
-  reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
   test -d /workspace/github-pages/archlinux || (echo "cannot find the gh pages repo, exiting" && exit 1)
   build-pacman-repo build || (echo "build-pacman-repo failed" && tree -lah pkgbuilds/ -I "src|pkg|.git|.cache" && exit 2)
   # Verify packages
