@@ -90,7 +90,20 @@ else
   echo "packages=$PACKAGE_LIST" >> /workspace/.github-output
   chmod ugo+r /workspace/.github-output
   # Build if outdated
-  reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist
+  # Retry reflector up to 5 times with backoff
+  for i in {1..5}; do
+    echo "🔄 Attempting to fetch mirrors (attempt $i/5)..."
+    if reflector --latest 10 --protocol http,https --sort rate --save /etc/pacman.d/mirrorlist; then
+      echo "✅ Mirror list updated successfully"
+      break
+    fi
+    if [ $i -eq 5 ]; then
+      echo "⚠️ Failed to update mirrors after 5 attempts, using existing mirrorlist"
+    else
+      echo "⚠️ Reflector failed, retrying in $((i * 5)) seconds..."
+      sleep $((i * 5))
+    fi
+  done
   test -d /workspace/github-pages/archlinux || (echo "cannot find the gh pages repo, exiting" && exit 1)
   build-pacman-repo build || (echo "build-pacman-repo failed" && tree -lah pkgbuilds/ -I "src|pkg|.git|.cache" && exit 2)
   # Verify packages
