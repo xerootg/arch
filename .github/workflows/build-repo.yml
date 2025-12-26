@@ -16,7 +16,7 @@ concurrency:
 jobs:
   build-pacman-repo:
     runs-on: ubuntu-latest
-    environment: prod
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || '' }}
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: BRAINSia/free-disk-space@v2
@@ -89,7 +89,7 @@ jobs:
           fi
 
       - name: Get GitHub App token for GitHub Pages
-        if: steps.check-outdated.outputs.has_outdated == 'true' && (github.event_name == 'schedule' || github.event_name == 'push')
+        if: steps.check-outdated.outputs.has_outdated == 'true' && github.ref == 'refs/heads/main'
         id: app-token
         uses: actions/create-github-app-token@v2.2.1
         with:
@@ -99,7 +99,7 @@ jobs:
           repositories: ${{ github.repository_owner }}.github.io
 
       - name: GitHub Commit & Push
-        if: steps.check-outdated.outputs.has_outdated == 'true' && (github.event_name == 'schedule' || github.event_name == 'push')
+        if: steps.check-outdated.outputs.has_outdated == 'true' && github.ref == 'refs/heads/main'
         uses: actions-js/push@v1.5
         with:
           repository: ${{ github.repository_owner }}/${{ github.repository_owner }}.github.io
