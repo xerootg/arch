@@ -1,0 +1,4 @@
+pkg/
+src/
+xeros-tiling-window-manager/
+*.pkg.*
