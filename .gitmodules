@@ -10,3 +10,6 @@
 [submodule "pkgbuilds/ttf-nanum"]
 	path = pkgbuilds/ttf-nanum
 	url = https://aur.archlinux.org/ttf-nanum.git
+[submodule "pkgbuilds/ipscan"]
+	path = pkgbuilds/ipscan
+	url = https://aur.archlinux.org/ipscan.git
