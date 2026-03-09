@@ -13,3 +13,6 @@
 [submodule "pkgbuilds/ipscan"]
 	path = pkgbuilds/ipscan
 	url = https://aur.archlinux.org/ipscan.git
+[submodule "pkgbuilds/tail-tray"]
+	path = pkgbuilds/tail-tray
+	url = https://aur.archlinux.org/tail-tray.git
