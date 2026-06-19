@@ -36,7 +36,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout Pacman Repo Builder
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: pacman-repo-builder/pacman-repo-builder
           path: pacman-repo-builder
@@ -51,13 +51,13 @@ jobs:
             git clone https://aur.archlinux.org/yay.git yay
 
       - name: Checkout this repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: repo
           submodules: recursive
 
       - name: Checkout GitHub Pages Repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/${{ github.repository_owner }}.github.io
           ref: main
