@@ -96,7 +96,7 @@ jobs:
 
       - name: GitHub Commit & Push
         if: steps.check-outdated.outputs.has_outdated == 'true' && github.ref == 'refs/heads/main'
-        uses: actions-js/push@v1.5
+        uses: actions-js/push@v1.6
         with:
           repository: ${{ github.repository_owner }}/${{ github.repository_owner }}.github.io
           directory: github-pages
