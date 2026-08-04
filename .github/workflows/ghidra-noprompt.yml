@@ -65,16 +65,15 @@ jobs:
           VERSION: ${{ steps.bump.outputs.version }}
         run: |
           set -euo pipefail
+          # The published release is the state, not the committed PKGBUILD.
+          # main is protected by a ruleset, so this job cannot commit a version
+          # bump; deciding from the release keeps the job stateless and correct
+          # whether or not the PKGBUILD in git happens to be current.
           build=false
-          if [ "${{ steps.bump.outputs.changed }}" = "true" ]; then
-            build=true
-            echo "PKGBUILD moved to ${VERSION}."
-          elif [ "${{ inputs.force }}" = "true" ]; then
+          if [ "${{ inputs.force }}" = "true" ]; then
             build=true
             echo "Forced rebuild requested."
           else
-            # The PKGBUILD is current, but the release may not have the package
-            # yet (first run, or a previous upload failed).
             assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)"
             if ! grep -q "^ghidra-noprompt-${VERSION}-" <<<"$assets"; then
               build=true
@@ -161,7 +160,12 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Commit the PKGBUILD update
+      - name: Refresh the PKGBUILD in the repository
+        # Best effort, and deliberately not fatal. main is covered by a
+        # repository ruleset requiring a pull request, which github-actions[bot]
+        # cannot bypass. The package and its database are already published at
+        # this point, so a rejected push must not fail the run -- it only means
+        # the checked-in recipe still names the previous version.
         if: steps.gate.outputs.build == 'true'
         run: |
           set -euo pipefail
@@ -171,8 +175,18 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add "$PKGDIR"
           if git diff --cached --quiet; then
-            echo "Nothing to commit."
+            echo "PKGBUILD already matches the published release."
             exit 0
           fi
-          git commit -m "ghidra-noprompt: ${{ steps.bump.outputs.previous || 'rebuild' }} -> ${{ steps.bump.outputs.version }}"
-          git push
+          git commit -q -m "ghidra-noprompt: ${{ steps.bump.outputs.previous || 'rebuild' }} -> ${{ steps.bump.outputs.version }}"
+          if git push 2>&1; then
+            echo "Pushed the PKGBUILD refresh."
+          else
+            echo "::warning::Could not push the PKGBUILD refresh; main requires changes to go through a pull request. The published release is authoritative and is up to date."
+            {
+              echo
+              echo "> The PKGBUILD refresh could not be pushed: \`main\` requires a pull"
+              echo "> request. The release is published and correct regardless. To have this"
+              echo "> committed automatically, give the Actions bot a bypass on the ruleset."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

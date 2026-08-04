@@ -1,0 +1,21 @@
+pkgbase = ghidra-noprompt
+	pkgdesc = Ghidra software reverse engineering suite, patched so opening an unanalyzed program does not prompt for auto-analysis
+	pkgver = 12.1.2
+	pkgrel = 1
+	url = https://github.com/xerootg/ghidra
+	arch = x86_64
+	license = Apache-2.0
+	depends = java-environment>=21
+	depends = bash
+	optdepends = python: PyGhidra and Ghidra Python scripting
+	optdepends = gdb: Ghidra debugger, native targets
+	optdepends = lldb: Ghidra debugger, LLDB targets
+	provides = ghidra=12.1.2
+	conflicts = ghidra
+	options = !strip
+	source = ghidra-noprompt-12.1.2.zip::https://github.com/xerootg/ghidra/releases/download/Ghidra_12.1.2_build-noprompt/ghidra_12.1.2_PUBLIC_noprompt_linux_x86_64.zip
+	source = ghidra-noprompt-12.1.2.png::https://github.com/xerootg/ghidra/releases/download/Ghidra_12.1.2_build-noprompt/ghidra-icon.png
+	sha256sums = dc3e20a1160ad93dcc3b745da785893aa13c5787c3226ffec5bb00ad380ae021
+	sha256sums = 0e53f1b091046809c0f393326cadc69c27b1d574254e1094beedb312d09aa9c9
+
+pkgname = ghidra-noprompt
