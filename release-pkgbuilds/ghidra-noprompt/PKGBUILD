@@ -1,0 +1,86 @@
+# Maintainer: xerootg <4009802+xerootg@users.noreply.github.com>
+#
+# Repackages the prebuilt Linux distribution published by
+# https://github.com/xerootg/ghidra -- stock Ghidra from the matching upstream
+# release tag, with the "... has not been analyzed. Would you like to analyze
+# it now?" prompt moved behind a tool option that ships disabled.
+#
+# The values in the generated block below are rewritten by
+# .github/workflows/bump-ghidra-noprompt.yml from the fork release's
+# release-metadata.json. Everything outside that block is hand-maintained.
+
+pkgname=ghidra-noprompt
+pkgrel=1
+
+# >>> generated: do not hand-edit >>>
+pkgver=12.1.2
+_relname=PUBLIC
+_javaver=21
+_zipsum='SKIP'
+_iconsum='SKIP'
+# <<< generated <<<
+
+_reltag="Ghidra_${pkgver}_build-noprompt"
+_distdir="ghidra_${pkgver}_${_relname}"
+
+pkgdesc="Ghidra software reverse engineering suite, patched so opening an unanalyzed program does not prompt for auto-analysis"
+arch=('x86_64')
+url='https://github.com/xerootg/ghidra'
+license=('Apache-2.0')
+depends=("java-environment>=${_javaver}" 'bash')
+optdepends=('python: PyGhidra and Ghidra Python scripting'
+            'gdb: Ghidra debugger, native targets'
+            'lldb: Ghidra debugger, LLDB targets')
+provides=("ghidra=${pkgver}")
+conflicts=('ghidra')
+# The distribution ships prebuilt native helpers (decompile, sleigh, ...) and a
+# large tree of jars; leave them exactly as upstream built them.
+options=('!strip')
+
+source=("ghidra-noprompt-${pkgver}.zip::${url}/releases/download/${_reltag}/ghidra_${pkgver}_${_relname}_noprompt_linux_x86_64.zip"
+        "ghidra-noprompt-${pkgver}.png::${url}/releases/download/${_reltag}/ghidra-icon.png")
+sha256sums=("${_zipsum}"
+            "${_iconsum}")
+
+package() {
+	install -dm755 "${pkgdir}/opt/${pkgname}"
+	cp -a "${srcdir}/${_distdir}/." "${pkgdir}/opt/${pkgname}/"
+
+	# ghidraRun resolves its own directory with `readlink -f`, so symlinking the
+	# launchers into /usr/bin works without a wrapper script.
+	install -dm755 "${pkgdir}/usr/bin"
+	ln -s "/opt/${pkgname}/ghidraRun" "${pkgdir}/usr/bin/ghidra"
+
+	local _tool
+	for _tool in analyzeHeadless pyghidraRun ghidraDebug buildGhidraJar sleigh bsim; do
+		if [ -f "${pkgdir}/opt/${pkgname}/support/${_tool}" ]; then
+			ln -s "/opt/${pkgname}/support/${_tool}" "${pkgdir}/usr/bin/ghidra-${_tool}"
+		fi
+	done
+
+	install -Dm644 "${srcdir}/ghidra-noprompt-${pkgver}.png" \
+		"${pkgdir}/usr/share/icons/hicolor/256x256/apps/${pkgname}.png"
+
+	install -Dm644 /dev/stdin "${pkgdir}/usr/share/applications/${pkgname}.desktop" <<-EOF
+		[Desktop Entry]
+		Type=Application
+		Name=Ghidra
+		GenericName=Software Reverse Engineering Suite
+		Comment=Reverse engineering framework (no auto-analysis prompt)
+		Exec=/usr/bin/ghidra %f
+		Icon=${pkgname}
+		Terminal=false
+		Categories=Development;Debugger;
+		Keywords=disassembler;decompiler;reverse;engineering;binary;
+		StartupWMClass=ghidra-GhidraRun
+	EOF
+
+	local _license
+	for _license in LICENSE licenses/LICENSE docs/LICENSE; do
+		if [ -f "${srcdir}/${_distdir}/${_license}" ]; then
+			install -Dm644 "${srcdir}/${_distdir}/${_license}" \
+				"${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+			break
+		fi
+	done
+}

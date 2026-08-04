@@ -1,0 +1,173 @@
+---
+name: ghidra-noprompt
+
+# xerootg/ghidra republishes every upstream Ghidra stable release with the
+# "would you like to analyze it now?" prompt patched out. This job notices a new
+# release there, repackages it for Arch, and serves it as its own small pacman
+# repository hosted in a GitHub Release.
+#
+# It deliberately does not go through build-pacman-repo / GitHub Pages: the
+# package is ~350 MB and GitHub rejects any pushed file over 100 MB, which would
+# break the Pages repo for every other package too.
+
+on:
+  schedule:
+    - cron: "40 8 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild and re-upload even if the PKGBUILD is already current"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "${{ github.workflow }}"
+  cancel-in-progress: false
+
+env:
+  FORK: xerootg/ghidra
+  PKGDIR: release-pkgbuilds/ghidra-noprompt
+  REPO_NAME: ghidra
+  RELEASE_TAG: pacman-repo
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Fetch the newest fork release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo "$FORK" --json tagName --jq .tagName)"
+          echo "Newest $FORK release: $tag"
+          gh release download "$tag" --repo "$FORK" \
+            --pattern release-metadata.json --output metadata.json --clobber
+          cat metadata.json
+
+      - name: Update PKGBUILD
+        id: bump
+        run: python3 .github/scripts/bump-ghidra-noprompt.py metadata.json "$PKGDIR"
+
+      - name: Decide whether to build
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          build=false
+          if [ "${{ steps.bump.outputs.changed }}" = "true" ]; then
+            build=true
+            echo "PKGBUILD moved to ${VERSION}."
+          elif [ "${{ inputs.force }}" = "true" ]; then
+            build=true
+            echo "Forced rebuild requested."
+          else
+            # The PKGBUILD is current, but the release may not have the package
+            # yet (first run, or a previous upload failed).
+            assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+            if ! grep -q "^ghidra-noprompt-${VERSION}-" <<<"$assets"; then
+              build=true
+              echo "No ghidra-noprompt-${VERSION}-* asset published yet."
+            else
+              echo "ghidra-noprompt ${VERSION} is already published."
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+      - name: Build the package and its pacman database
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -e REPO_NAME="$REPO_NAME" \
+            -w /work \
+            archlinux:base-devel \
+            bash .github/scripts/build-ghidra-noprompt.sh
+
+      - name: Publish to the pacman repo release
+        if: steps.gate.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -lh out/
+
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            cat > release-notes.md <<'EOF'
+          A pacman repository served straight from this release, for packages too
+          large to live in the GitHub Pages repo (GitHub rejects any pushed file
+          over 100 MB).
+
+          Add to `/etc/pacman.conf`:
+
+          ```ini
+          [ghidra]
+          Server = https://github.com/xerootg/arch/releases/download/pacman-repo
+          SigLevel = Optional TrustAll
+          ```
+
+          Then `sudo pacman -Sy ghidra-noprompt`.
+
+          Contains **ghidra-noprompt**: stock Ghidra from the matching upstream
+          release, patched so opening a program that has never been analyzed does
+          not prompt to auto-analyze. See
+          [xerootg/ghidra](https://github.com/xerootg/ghidra) for the patch and
+          the build that produced it. It `provides`/`conflicts` with `ghidra`.
+
+          Assets here are replaced in place on every update; the tag is fixed so
+          the `Server` URL never changes.
+          EOF
+            gh release create "$RELEASE_TAG" \
+              --title "pacman repo" --notes-file release-notes.md
+          fi
+
+          gh release upload "$RELEASE_TAG" \
+            out/ghidra-noprompt-*.pkg.tar.zst \
+            "out/${REPO_NAME}.db" "out/${REPO_NAME}.files" \
+            "out/${REPO_NAME}.db.tar.gz" "out/${REPO_NAME}.files.tar.gz" \
+            --clobber
+
+          # Drop superseded package assets, but only after the new one is up.
+          keep="$(basename out/ghidra-noprompt-*.pkg.tar.zst)"
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
+            | grep -E '^ghidra-noprompt-.*\.pkg\.tar\.zst$' \
+            | grep -vxF "$keep" \
+            | while read -r old; do
+                echo "Removing superseded asset $old"
+                gh release delete-asset "$RELEASE_TAG" "$old" --yes
+              done
+
+          {
+            echo "### Published ghidra-noprompt ${VERSION}"
+            echo
+            echo '```'
+            echo "$keep"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit the PKGBUILD update
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          rm -f metadata.json release-notes.md
+          rm -rf out .build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$PKGDIR"
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+          git commit -m "ghidra-noprompt: ${{ steps.bump.outputs.previous || 'rebuild' }} -> ${{ steps.bump.outputs.version }}"
+          git push
