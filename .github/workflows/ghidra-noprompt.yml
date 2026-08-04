@@ -141,10 +141,13 @@ jobs:
             --clobber
 
           # Drop superseded package assets, but only after the new one is up.
+          # In the steady state both greps come up empty -- there is one package
+          # asset and it is the one just uploaded -- and an empty grep exits 1,
+          # which under pipefail would fail the step after a successful publish.
           keep="$(basename out/ghidra-noprompt-*.pkg.tar.zst)"
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
-            | grep -E '^ghidra-noprompt-.*\.pkg\.tar\.zst$' \
-            | grep -vxF "$keep" \
+            | { grep -E '^ghidra-noprompt-.*\.pkg\.tar\.zst$' || true; } \
+            | { grep -vxF "$keep" || true; } \
             | while read -r old; do
                 echo "Removing superseded asset $old"
                 gh release delete-asset "$RELEASE_TAG" "$old" --yes

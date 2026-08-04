@@ -58,10 +58,12 @@ def main():
     current = re.search(r"(?m)^pkgver=(.+)$", pkgbuild)
     if not current:
         sys.exit("error: PKGBUILD has no pkgver")
-    if current.group(1).strip() == version:
-        emit(changed="false", version=version)
-        return
+    previous = current.group(1).strip()
 
+    # Always rewrite the block and compare the result, rather than short
+    # circuiting on the version alone. A hand-seeded PKGBUILD carries
+    # placeholder checksums at the right version, and a version-only check
+    # would leave those placeholders in place forever.
     start = pkgbuild.index("# >>> generated")
     end = pkgbuild.index("# <<< generated")
     block = pkgbuild[start:end]
@@ -70,13 +72,19 @@ def main():
     block = set_var(block, "_javaver", meta["java_min"])
     block = set_var(block, "_zipsum", f"'{meta['zip_sha256']}'")
     block = set_var(block, "_iconsum", f"'{meta['icon_sha256']}'")
-    pkgbuild = pkgbuild[:start] + block + pkgbuild[end:]
+    updated = pkgbuild[:start] + block + pkgbuild[end:]
 
-    # A new upstream version always restarts the package release counter.
-    pkgbuild = set_var(pkgbuild, "pkgrel", "1")
+    # A new upstream version restarts the package release counter; a checksum
+    # correction at the same version must not.
+    if previous != version:
+        updated = set_var(updated, "pkgrel", "1")
+
+    if updated == pkgbuild:
+        emit(changed="false", version=version, previous=previous)
+        return
 
     with open(pkgbuild_path, "w", encoding="utf-8") as fh:
-        fh.write(pkgbuild)
+        fh.write(updated)
 
     # Keep .SRCINFO in step. The build container regenerates it from the
     # PKGBUILD anyway, but the committed copy is what the outdated-package
@@ -86,7 +94,8 @@ def main():
         with open(srcinfo_path, encoding="utf-8") as fh:
             srcinfo = fh.read()
         srcinfo = set_var(srcinfo, "pkgver", version)
-        srcinfo = set_var(srcinfo, "pkgrel", "1")
+        if previous != version:
+            srcinfo = set_var(srcinfo, "pkgrel", "1")
         srcinfo = re.sub(r"(?m)^(\s*)depends = java-environment>=.*$",
                          rf"\g<1>depends = java-environment>={meta['java_min']}", srcinfo)
         srcinfo = re.sub(r"(?m)^(\s*)provides = ghidra=.*$",
@@ -106,7 +115,7 @@ def main():
         with open(srcinfo_path, "w", encoding="utf-8") as fh:
             fh.write(srcinfo)
 
-    emit(changed="true", version=version, previous=current.group(1).strip())
+    emit(changed="true", version=version, previous=previous)
 
 
 if __name__ == "__main__":
