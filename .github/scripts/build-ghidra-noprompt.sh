@@ -16,7 +16,7 @@ OUTDIR=/work/out
 REPO_NAME="${REPO_NAME:-ghidra}"
 
 pacman -Syu --noconfirm --needed --disable-download-timeout \
-  archlinux-keyring base-devel
+  archlinux-keyring base-devel curl
 
 # The payload is a zip full of already-compressed jars. Level 20 spends many
 # minutes to gain a percent or two over level 10.
@@ -51,6 +51,8 @@ for ext in db files; do
   cp "${REPO_NAME}.${ext}.tar.gz" "${REPO_NAME}.${ext}"
 done
 
-# The container runs as root; hand the results back to the runner user.
+# Everything below runs as root inside the container, so the runner user cannot
+# clean up after us. Drop the build tree here and leave the results writable.
+rm -rf "$BUILDDIR"
 chmod -R a+rwX "$OUTDIR" "$PKGDIR"
 ls -lh "$OUTDIR"
