@@ -3,7 +3,7 @@
 # inside an archlinux:base-devel container. Run from the repo root with the
 # workspace mounted at /work.
 #
-# This package lives outside pkgbuilds/ on purpose: at ~350 MB it cannot be
+# This package lives outside pkgbuilds/ on purpose: at ~500 MB it cannot be
 # committed to the GitHub Pages repo (GitHub rejects any pushed file over
 # 100 MB), so it is served from a GitHub Release instead and must not be
 # touched by the build-pacman-repo pipeline.

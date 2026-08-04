@@ -11,7 +11,7 @@ SigLevel = Optional TrustAll
 
 ## `[ghidra]` — the oversized-package repo
 
-`ghidra-noprompt` is ~350 MB, and GitHub refuses any pushed file over 100 MB, so
+`ghidra-noprompt` is ~500 MB, and GitHub refuses any pushed file over 100 MB, so
 it cannot live in the Pages repo above. It gets its own pacman repo, served
 directly out of a GitHub Release on this repository:
 

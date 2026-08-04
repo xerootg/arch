@@ -7,7 +7,7 @@ name: ghidra-noprompt
 # repository hosted in a GitHub Release.
 #
 # It deliberately does not go through build-pacman-repo / GitHub Pages: the
-# package is ~350 MB and GitHub rejects any pushed file over 100 MB, which would
+# package is ~500 MB and GitHub rejects any pushed file over 100 MB, which would
 # break the Pages repo for every other package too.
 
 on:
@@ -48,13 +48,15 @@ jobs:
           set -euo pipefail
           tag="$(gh release view --repo "$FORK" --json tagName --jq .tagName)"
           echo "Newest $FORK release: $tag"
+          # --dir rather than --output: gh rejects --output when the pattern
+          # could match more than one asset.
           gh release download "$tag" --repo "$FORK" \
-            --pattern release-metadata.json --output metadata.json --clobber
-          cat metadata.json
+            --pattern release-metadata.json --dir . --clobber
+          cat release-metadata.json
 
       - name: Update PKGBUILD
         id: bump
-        run: python3 .github/scripts/bump-ghidra-noprompt.py metadata.json "$PKGDIR"
+        run: python3 .github/scripts/bump-ghidra-noprompt.py release-metadata.json "$PKGDIR"
 
       - name: Decide whether to build
         id: gate
@@ -160,7 +162,7 @@ jobs:
         if: steps.gate.outputs.build == 'true'
         run: |
           set -euo pipefail
-          rm -f metadata.json release-notes.md
+          rm -f release-metadata.json release-notes.md
           rm -rf out .build
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
