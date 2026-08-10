@@ -2,7 +2,7 @@
 	path = pkgbuilds/libfprint-elanmoc2-slg3-git
 	url = https://github.com/xerootg/libfprint-elanmoc2-slg3-git
 [submodule "pkgbuilds/orca-slicer-git"]
-	path = pkgbuilds/orca-slicer-git
+	path = release-pkgbuilds/orca-slicer-git
 	url = https://github.com/xerootg/orca-slicer-git.git
 [submodule "pkgbuilds/imhex"]
 	path = pkgbuilds/imhex

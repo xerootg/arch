@@ -46,11 +46,12 @@ install -Dm755 target/release/build-pacman-repo /usr/local/bin/build-pacman-repo
 # Patch makepkg
 cd /workspace/repo
 build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
-# --ultra -20 raises the window to 128 MiB and -T0 multiplies that by every
-# core, which lands a multi-gigabyte spike at the very end of an already
-# memory-starved build. Level 19 keeps the window at 8 MiB for a fraction of a
-# percent of ratio on package payloads, and two threads bounds the spike.
-sed -i "s/COMPRESSZST=.*/COMPRESSZST=(zstd -c -T2 -19 -)/" /etc/makepkg.conf
+# Keep --ultra -20. The 128 MiB window is doing real work here: these packages
+# carry thousands of near-identical printer profiles and mesh resources, and
+# dropping to level 19's 8 MiB window was measured at 3 MB -> 22 MB on
+# orca-slicer-git-extras alone. Only the thread count is capped -- -T0 multiplied
+# the per-thread window allocation by every core for no ratio benefit.
+sed -i "s/COMPRESSZST=.*/COMPRESSZST=(zstd -c -T2 --ultra -20 -)/" /etc/makepkg.conf
 sed -i "s/OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/" /etc/makepkg.conf
 
 # Install yay as root

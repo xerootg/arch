@@ -1,0 +1,183 @@
+---
+name: orca-slicer
+
+# orca-slicer-git compresses to ~164 MB, over GitHub's 100 MB push limit, so it
+# cannot go through build-pacman-repo into the Pages repo -- that push is
+# refused outright and takes every other package's update down with it. This
+# job builds it separately and serves it as its own pacman repository hosted in
+# a GitHub Release.
+#
+# This is a real from-source build of OrcaSlicer and its whole bundled
+# dependency stack: budget ~2h45m.
+
+on:
+  schedule:
+    - cron: "10 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild and re-upload even if this revision is already published"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "${{ github.workflow }}"
+  cancel-in-progress: false
+
+env:
+  PKGDIR: release-pkgbuilds/orca-slicer-git
+  REPO_NAME: orca
+  RELEASE_TAG: orca-repo
+  UPSTREAM: https://github.com/SoftFever/OrcaSlicer.git
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Free Disk Space (Ubuntu)
+        uses: BRAINSia/free-disk-space@v2
+        with:
+          tool-cache: false
+          mandb: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          # Never reclaim the swapfile here. This build was being OOM-killed,
+          # not running out of disk, and those 4 GB are the headroom it needs.
+          swap-storage: false
+
+      - name: Work out the upstream revision
+        id: ver
+        run: |
+          set -euo pipefail
+          # Mirrors the PKGBUILD's pkgver() exactly. A blobless clone gives the
+          # full commit graph that rev-list --count needs without paying for
+          # OrcaSlicer's resource tree, and `git show` lazily fetches the single
+          # blob we actually read.
+          git clone --filter=blob:none --no-checkout "$UPSTREAM" orca-src
+          cd orca-src
+          commit="$(git rev-parse --short=7 HEAD)"
+          revision="$(git rev-list --count HEAD)"
+          version="$(git show HEAD:version.inc \
+            | sed -n 's/set(SoftFever_VERSION "\([^"]*\)-.*".*/\1/p')"
+          if [ -z "$version" ] || [ -z "$revision" ]; then
+            echo "::error::could not derive pkgver from $UPSTREAM"
+            exit 1
+          fi
+          pkgver="${version}.r${revision}.${commit}"
+          echo "upstream pkgver: $pkgver"
+          echo "pkgver=$pkgver" >> "$GITHUB_OUTPUT"
+          cd .. && rm -rf orca-src
+
+      - name: Decide whether to build
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PKGVER: ${{ steps.ver.outputs.pkgver }}
+        run: |
+          set -euo pipefail
+          # The published release is the state. Nothing is committed per build,
+          # so there is no checked-in version to drift out of sync.
+          build=false
+          if [ "${{ inputs.force }}" = "true" ]; then
+            build=true
+            echo "Forced rebuild requested."
+          else
+            assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+            if ! grep -q "^orca-slicer-git-${PKGVER}-" <<<"$assets"; then
+              build=true
+              echo "orca-slicer-git ${PKGVER} is not published yet."
+            else
+              echo "orca-slicer-git ${PKGVER} is already published."
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+      - name: Build the packages and their pacman database
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -e REPO_NAME="$REPO_NAME" \
+            -w /work \
+            archlinux:base-devel \
+            bash .github/scripts/build-orca-slicer.sh
+
+      - name: Publish to the pacman repo release
+        if: steps.gate.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PKGVER: ${{ steps.ver.outputs.pkgver }}
+        run: |
+          set -euo pipefail
+          ls -lh orca-out/
+
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            cat > orca-notes.md <<'EOF'
+          A pacman repository served straight from this release.
+
+          `orca-slicer-git` compresses to around 164 MB, and GitHub refuses any
+          pushed file over 100 MB, so it cannot live in the GitHub Pages repo
+          that serves `[custom]`. Release assets have a 2 GB limit, so it lives
+          here instead.
+
+          Add to `/etc/pacman.conf`:
+
+          ```ini
+          [orca]
+          Server = https://github.com/xerootg/arch/releases/download/orca-repo
+          SigLevel = Optional TrustAll
+          ```
+
+          Then `sudo pacman -Sy orca-slicer-git`.
+
+          Provides `orca-slicer-git` and `orca-slicer-git-extras` (calibration
+          models, daily tips and the profile validator). The main package
+          `provides`/`conflicts` with `orca-slicer`.
+
+          Assets are replaced in place on every update and superseded builds are
+          deleted, so this release holds one revision at a time. The tag is
+          fixed, so the `Server` URL never changes.
+          EOF
+            gh release create "$RELEASE_TAG" \
+              --title "orca-slicer pacman repo" --notes-file orca-notes.md
+          fi
+
+          gh release upload "$RELEASE_TAG" \
+            orca-out/orca-slicer-git-*.pkg.tar.zst \
+            "orca-out/${REPO_NAME}.db" "orca-out/${REPO_NAME}.files" \
+            "orca-out/${REPO_NAME}.db.tar.gz" "orca-out/${REPO_NAME}.files.tar.gz" \
+            --clobber
+
+          # Drop superseded packages, but only once the new ones are up. Both
+          # greps come up empty in the steady state, and an empty grep exits 1,
+          # which under pipefail would fail a run that already published fine.
+          keep="$(cd orca-out && ls orca-slicer-git-*.pkg.tar.zst | tr '\n' '|')"
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
+            | { grep -E '^orca-slicer-git.*\.pkg\.tar\.zst$' || true; } \
+            | { grep -vE "^(${keep%|})$" || true; } \
+            | while read -r old; do
+                echo "Removing superseded asset $old"
+                gh release delete-asset "$RELEASE_TAG" "$old" --yes
+              done
+
+          {
+            echo "### Published orca-slicer-git ${PKGVER}"
+            echo
+            echo '```'
+            ( cd orca-out && ls -lh ./*.pkg.tar.zst )
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

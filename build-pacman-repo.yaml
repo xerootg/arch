@@ -18,8 +18,10 @@ members:
   - directory: libfprint-elanmoc2-slg3-git
     pacman: pacman
   - directory: ttf-nanum
-  - directory: orca-slicer-git
-    allow-failure: true
+  # orca-slicer-git is not a member here on purpose. Its package is 164 MB,
+  # which GitHub refuses to accept on push, so it is built by
+  # .github/workflows/orca-slicer.yml into release-hosted [orca] instead.
+  # Its PKGBUILD lives in release-pkgbuilds/ so this pipeline never walks it.
   - directory: imhex
     allow-failure: true
   - directory: kwin-scripts-xeros-tiling-window-manager

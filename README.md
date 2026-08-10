@@ -48,3 +48,35 @@ refresh the PKGBUILD afterwards, but the `main` ruleset requires a pull request
 and `github-actions[bot]` cannot bypass it, so that push is best effort and
 non-fatal — expect the checked-in recipe to lag a release behind unless the bot
 is granted a bypass.
+
+## `[orca]` — OrcaSlicer, for the same reason
+
+`orca-slicer-git` compresses to ~164 MB, so it hits the same 100 MB wall. It gets
+its own release-hosted repo:
+
+```ini
+[orca]
+Server = https://github.com/xerootg/arch/releases/download/orca-repo
+SigLevel = Optional TrustAll
+```
+
+Then `sudo pacman -Sy orca-slicer-git`.
+
+Ships `orca-slicer-git` and `orca-slicer-git-extras` (calibration models, daily
+tips, profile validator). The main package `provides`/`conflicts` with
+`orca-slicer`.
+
+`.github/workflows/orca-slicer.yml` computes upstream's `pkgver` the same way the
+PKGBUILD does, skips the run if that revision is already published, and otherwise
+does a full from-source build — around **2h45m** — before refreshing `orca.db` in
+the fixed `orca-repo` release and deleting the superseded packages.
+
+Two settings keep that build alive on a 16 GB runner, both in
+[the PKGBUILD](https://github.com/xerootg/orca-slicer-git): `options=('!lto')` at
+**pkgbase** level, and `ninja -j2` for the main build. The pkgbase part matters —
+an `options=()` inside a `package_*()` function only affects packaging, and
+makepkg resolves `lto` before `build()` runs, so a per-package array cannot
+disable it. Without this the job is OOM-killed (exit 137) while compiling
+libslic3r's precompiled header, and because that kill takes the whole container
+down rather than returning a non-zero status, `allow-failure` does not contain
+it — it stops every other package in the repo from updating too.
