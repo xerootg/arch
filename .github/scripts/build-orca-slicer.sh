@@ -40,17 +40,31 @@ sed -i 's/^OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman 
 echo "--- effective makepkg.conf ---"
 grep -E '^(OPTIONS|COMPRESSZST|CFLAGS|CXXFLAGS|DEBUG_CFLAGS|MAKEFLAGS)=' /etc/makepkg.conf
 
-# When the runner is OOM-killed it takes the unflushed log with it, which is why
-# the last two failures left no cause behind. Sample into the stream so at least
-# the flushed portion shows the trend.
-( while sleep 60; do
-    echo "[resources] $(date -u +%H:%M:%S)" \
-      "mem=$(free -m | awk '/^Mem:/{print $3"/"$2"MB"}')" \
-      "swap=$(free -m | awk '/^Swap:/{print $3"/"$2"MB"}')" \
-      "disk=$(df -m /work | awk 'NR==2{print $4"MB free"}')"
+# Sample to a FILE, not just stdout. The previous attempt only echoed, and the
+# samples were then unreadable: cmake emits thousands of "-- Installing:" lines
+# per second during the dependency install, the log API only serves the tail,
+# and every useful line was buried under OpenCASCADE headers. The file is
+# uploaded as an artifact by the workflow, so it survives a clean failure even
+# when the tail is worthless.
+RESOURCE_LOG="${RESOURCE_LOG:-/work/resources.log}"
+: > "$RESOURCE_LOG"
+chmod a+rw "$RESOURCE_LOG"
+( while sleep 30; do
+    printf '%s mem=%s swap=%s disk_work=%s disk_root=%s load=%s\n' \
+      "$(date -u +%H:%M:%S)" \
+      "$(free -m | awk '/^Mem:/{print $3"/"$2"MB"}')" \
+      "$(free -m | awk '/^Swap:/{print $3"/"$2"MB"}')" \
+      "$(df -m /work | awk 'NR==2{print $4"MB"}')" \
+      "$(df -m / | awk 'NR==2{print $4"MB"}')" \
+      "$(cut -d' ' -f1-3 /proc/loadavg)" >> "$RESOURCE_LOG"
   done ) &
 _sampler=$!
 trap 'kill "$_sampler" 2>/dev/null || true' EXIT
+
+# Echo a copy into the stream too, but rarely enough to survive the flood.
+( while sleep 300; do tail -1 "$RESOURCE_LOG" | sed 's/^/[resources] /'; done ) &
+_echoer=$!
+trap 'kill "$_sampler" "$_echoer" 2>/dev/null || true' EXIT
 
 useradd -m builder
 echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
@@ -106,7 +120,24 @@ for probe in gtk3 webkit2gtk-4.1 glew; do
   pacman -Qi "$probe" >/dev/null 2>&1 || { echo "::error::$probe missing after dependency install"; exit 1; }
 done
 
-su builder -c "cd '$BUILDDIR' && makepkg -f --noconfirm --noprogressbar --nocheck"
+# Filter cmake's install chatter. It is thousands of lines per second and zero
+# information, and it is what made the last two failures undiagnosable: the log
+# API serves only the tail, so the flood pushed every useful line out of reach.
+# PIPESTATUS keeps makepkg's real exit code, which a bare pipe would discard.
+set +e
+su builder -c "cd '$BUILDDIR' && makepkg -f --noconfirm --noprogressbar --nocheck" 2>&1 \
+  | grep --line-buffered -vE '^-- (Installing|Up-to-date): '
+_rc=${PIPESTATUS[0]}
+set -e
+if [ "$_rc" -ne 0 ]; then
+  echo "::error::makepkg exited $_rc"
+  echo "--- final resource samples ---"
+  tail -20 "$RESOURCE_LOG" || true
+  exit "$_rc"
+fi
+
+echo "--- resource samples (build complete) ---"
+tail -5 "$RESOURCE_LOG" || true
 
 rm -rf "$OUTDIR"
 mkdir -p "$OUTDIR"
