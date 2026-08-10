@@ -1,0 +1,54 @@
+---
+name: AUR dependency walk
+
+# Answers "what would this repo actually have to build?" for a set of packages.
+# Run it before adding anything: it separates the AUR packages that need a
+# PKGBUILD here from the ones the official repos already satisfy.
+#
+# Read-only. It resolves and reports, it never builds or publishes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Space-separated package names to walk"
+        required: true
+        default: "electron37"
+
+permissions:
+  contents: read
+
+jobs:
+  walk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Walk dependencies
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -e REPORT=/work/dep-report.md \
+            -w /work \
+            archlinux:base-devel \
+            bash .github/scripts/aur-dep-walk.sh ${{ inputs.packages }}
+
+      - name: Publish the report
+        if: always()
+        run: |
+          if [ -f dep-report.md ]; then
+            cat dep-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No report produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dep-report
+          path: dep-report.md
+          if-no-files-found: warn
