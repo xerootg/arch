@@ -46,7 +46,11 @@ install -Dm755 target/release/build-pacman-repo /usr/local/bin/build-pacman-repo
 # Patch makepkg
 cd /workspace/repo
 build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
-sed -i "s/COMPRESSZST=.*/COMPRESSZST=(zstd -c -T0 --ultra -20 -)/" /etc/makepkg.conf
+# --ultra -20 raises the window to 128 MiB and -T0 multiplies that by every
+# core, which lands a multi-gigabyte spike at the very end of an already
+# memory-starved build. Level 19 keeps the window at 8 MiB for a fraction of a
+# percent of ratio on package payloads, and two threads bounds the spike.
+sed -i "s/COMPRESSZST=.*/COMPRESSZST=(zstd -c -T2 -19 -)/" /etc/makepkg.conf
 sed -i "s/OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/" /etc/makepkg.conf
 
 # Install yay as root

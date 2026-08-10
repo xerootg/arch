@@ -33,7 +33,11 @@ jobs:
           haskell: true
           large-packages: true
           docker-images: true
-          swap-storage: true
+
+          # Keep the runner's 4 GB swapfile. Reclaiming it buys a little disk
+          # but removes the headroom that large C++ builds rely on, and this
+          # repo's builds were being OOM-killed rather than running out of disk.
+          swap-storage: false
 
       - name: Checkout Pacman Repo Builder
         uses: actions/checkout@v7
