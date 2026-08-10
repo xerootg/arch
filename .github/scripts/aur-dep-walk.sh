@@ -17,15 +17,24 @@ REPORT="${REPORT:-/work/dep-report.md}"
 pacman -Syu --noconfirm --needed --disable-download-timeout \
   archlinux-keyring base-devel git curl >/dev/null
 
+# yay refuses to run as root, so everything below goes through this user.
+useradd -m builder 2>/dev/null || true
+echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+
 if ! command -v yay >/dev/null 2>&1; then
   echo "Building yay..."
-  useradd -m builder 2>/dev/null || true
-  echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
   install -d -o builder -g builder /tmp/yay-build
   su builder -c 'git clone -q https://aur.archlinux.org/yay-bin.git /tmp/yay-build/yay-bin'
   su builder -c 'cd /tmp/yay-build/yay-bin && makepkg -si --noconfirm --noprogressbar' >/dev/null
 fi
-yay --version | head -1
+
+# Piping into head closes the pipe early, and under pipefail that SIGPIPE is a
+# fatal 141. Read it into a variable instead.
+yay_version="$(su builder -c 'yay --version' 2>/dev/null || true)"
+echo "${yay_version%%$'\n'*}"
+
+# All AUR queries run unprivileged.
+yay_si() { su builder -c "yay -Si -- $(printf '%q' "$1")" 2>/dev/null; }
 
 # strip version constraints, descriptions and alternation from a dep atom
 clean_dep() {
@@ -54,7 +63,7 @@ while [ ${#queue[@]} -gt 0 ]; do
     continue
   fi
 
-  info="$(yay -Si "$pkg" 2>/dev/null || true)"
+  info="$(yay_si "$pkg" || true)"
   if [ -z "$info" ]; then
     KIND["$pkg"]=unresolved
     continue
