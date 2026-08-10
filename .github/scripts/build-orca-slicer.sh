@@ -28,6 +28,30 @@ pacman -Syu --noconfirm --needed --disable-download-timeout \
 # at 3 MB -> 22 MB on the -extras package alone. Cap threads instead.
 sed -i 's/^COMPRESSZST=.*/COMPRESSZST=(zstd -c -T2 --ultra -20 -)/' /etc/makepkg.conf
 
+# Pin OPTIONS to exactly what build-inside-container.sh uses. Leaving it to
+# whatever the container image happens to ship is an uncontrolled variable in a
+# build that is already memory-bound, and !debug is the part that matters:
+# makepkg resolves `debug` from the pkgbase options array, falling back to this
+# file. The PKGBUILD's pkgbase array is options=('!lto') and says nothing about
+# debug -- the !debug in its package_*() functions only governs packaging -- so
+# a stock `debug` here puts -g on every translation unit in the tree.
+sed -i 's/^OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/' /etc/makepkg.conf
+
+echo "--- effective makepkg.conf ---"
+grep -E '^(OPTIONS|COMPRESSZST|CFLAGS|CXXFLAGS|DEBUG_CFLAGS|MAKEFLAGS)=' /etc/makepkg.conf
+
+# When the runner is OOM-killed it takes the unflushed log with it, which is why
+# the last two failures left no cause behind. Sample into the stream so at least
+# the flushed portion shows the trend.
+( while sleep 60; do
+    echo "[resources] $(date -u +%H:%M:%S)" \
+      "mem=$(free -m | awk '/^Mem:/{print $3"/"$2"MB"}')" \
+      "swap=$(free -m | awk '/^Swap:/{print $3"/"$2"MB"}')" \
+      "disk=$(df -m /work | awk 'NR==2{print $4"MB free"}')"
+  done ) &
+_sampler=$!
+trap 'kill "$_sampler" 2>/dev/null || true' EXIT
+
 useradd -m builder
 echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
 
