@@ -37,10 +37,52 @@ install -d -o builder -g builder "$BUILDDIR"
 install -m644 -o builder -g builder "$PKGDIR"/PKGBUILD "$BUILDDIR/PKGBUILD"
 install -m644 -o builder -g builder "$PKGDIR"/orca-slicer-wrapper.sh "$BUILDDIR/orca-slicer-wrapper.sh"
 
-# -s installs the makedepends (cmake, ninja, ...) via sudo as builder. This one
-# genuinely needs them; it is a from-source build, not a repack.
-su builder -c "cd '$BUILDDIR' && makepkg -s --noconfirm --noprogressbar --nocheck"
+# makepkg -s is not enough here. This PKGBUILD is a split package and declares
+# its depends inside package_orca-slicer-git(), where makepkg cannot see them
+# when it resolves dependencies -- only the pkgbase makedepends get installed.
+# The build genuinely needs the runtime ones too: deps/CMakeLists.txt is patched
+# to build wxWidgets against system GTK3, so a missing gtk3 fails the configure
+# step with "Could NOT find GTK3" about five minutes in.
+#
+# Take the union from .SRCINFO instead, which flattens every package section's
+# arrays, and strip any version constraints before handing them to pacman. This
+# is what build-pacman-repo was doing via yay before this package moved out.
 su builder -c "cd '$BUILDDIR' && makepkg --printsrcinfo > .SRCINFO"
+mapfile -t DEPS < <(
+  sed -n 's/^[[:space:]]*\(make\)\?depends = //p' "$BUILDDIR/.SRCINFO" \
+    | sed 's/[<>=].*$//' \
+    | sort -u
+)
+if [ ${#DEPS[@]} -eq 0 ]; then
+  echo "::error::no dependencies parsed from .SRCINFO"
+  exit 1
+fi
+
+# Some depends come from xerootg's own repo rather than the official ones --
+# ttf-nanum, for instance. pacman aborts the whole transaction on an unknown
+# target, so drop those here. They are runtime fonts and data, not build inputs;
+# the built package still records the dependency and pacman resolves it from
+# [custom] at install time.
+AVAILABLE=(); SKIPPED=()
+for dep in "${DEPS[@]}"; do
+  if pacman -Si "$dep" >/dev/null 2>&1; then
+    AVAILABLE+=("$dep")
+  else
+    SKIPPED+=("$dep")
+  fi
+done
+if [ ${#SKIPPED[@]} -gt 0 ]; then
+  echo "Not in the official repos, skipping: ${SKIPPED[*]}"
+fi
+echo "Installing ${#AVAILABLE[@]} dependencies: ${AVAILABLE[*]}"
+pacman -S --needed --noconfirm --disable-download-timeout "${AVAILABLE[@]}"
+
+# Fail loudly rather than five minutes into a cmake configure.
+for probe in gtk3 webkit2gtk-4.1 glew; do
+  pacman -Qi "$probe" >/dev/null 2>&1 || { echo "::error::$probe missing after dependency install"; exit 1; }
+done
+
+su builder -c "cd '$BUILDDIR' && makepkg -f --noconfirm --noprogressbar --nocheck"
 
 rm -rf "$OUTDIR"
 mkdir -p "$OUTDIR"
