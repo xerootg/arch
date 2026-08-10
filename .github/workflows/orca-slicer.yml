@@ -121,7 +121,7 @@ jobs:
         # leaves the memory/disk trace behind. The log tail is unreliable here:
         # cmake's install chatter floods it faster than the API will serve it.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: orca-build-resources
           path: resources.log
