@@ -27,14 +27,21 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Walk dependencies
+        env:
+          # Via the environment rather than expanded into the command line --
+          # a ${{ }} interpolation here would be a shell injection point.
+          # Left unquoted below on purpose: the split into separate arguments
+          # is the intent.
+          PACKAGES: ${{ inputs.packages }}
         run: |
           set -euo pipefail
+          # shellcheck disable=SC2086
           docker run --rm \
             -v "${{ github.workspace }}:/work" \
             -e REPORT=/work/dep-report.md \
             -w /work \
             archlinux:base-devel \
-            bash .github/scripts/aur-dep-walk.sh ${{ inputs.packages }}
+            bash .github/scripts/aur-dep-walk.sh $PACKAGES
 
       - name: Publish the report
         if: always()
