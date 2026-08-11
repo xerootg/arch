@@ -1,0 +1,153 @@
+---
+name: repo-index
+
+# Regenerates the package listing published at https://xerootg.github.io/.
+#
+# The input is each repo's pacman database -- the `.db` that `repo-add` writes
+# at the end of every build -- so the page is derived from the same artifact
+# pacman itself downloads and cannot drift from what a client would install.
+# Nothing on the page is hand-maintained.
+#
+# This is deliberately a separate workflow rather than a step bolted onto the
+# three publishers. Those run on different schedules, take between two minutes
+# and three hours, and two of them never check out the Pages repo at all;
+# having each one rewrite a shared index would race on the same push. Instead
+# every publisher wakes this job when it finishes, and this job is the only
+# writer.
+
+on:
+  workflow_run:
+    workflows: ["Build Pacman Repo", "ghidra-noprompt", "orca-slicer"]
+    types: [completed]
+  schedule:
+    # Catches anything the workflow_run hooks miss, and keeps the "last checked"
+    # stamp on the page honest during a quiet week.
+    - cron: "35 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One writer. Never cancel a run mid-push.
+  group: "${{ github.workflow }}"
+  cancel-in-progress: false
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Where PAGES_BOT_APP_ID / PAGES_BOT_PRIVATE_KEY live.
+    environment: prod
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v7
+        with:
+          path: tooling
+
+      - name: Get GitHub App token for GitHub Pages
+        id: app-token
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          app-id: ${{ secrets.PAGES_BOT_APP_ID }}
+          private-key: ${{ secrets.PAGES_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository_owner }}.github.io
+
+      - name: Checkout the GitHub Pages repo
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/${{ github.repository_owner }}.github.io
+          ref: main
+          path: pages
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Collect the repo databases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p dbs
+
+          # [custom] is served from Pages, so its database is already checked out.
+          if [ -f pages/archlinux/custom.db ]; then
+            cp pages/archlinux/custom.db dbs/custom.db
+          else
+            echo "::warning::pages/archlinux/custom.db is missing"
+          fi
+
+          # The release-hosted repos. A download failure is not fatal: the
+          # generator keeps that repo's last known contents rather than
+          # reporting every one of its packages as removed.
+          for pair in "pacman-repo:ghidra" "orca-repo:orca"; do
+            tag="${pair%%:*}"; name="${pair##*:}"
+            if gh release download "$tag" --pattern "${name}.db" --dir dbs --clobber; then
+              echo "fetched ${name}.db from $tag"
+            else
+              echo "::warning::could not download ${name}.db from release $tag"
+            fi
+          done
+
+          ls -l dbs/
+
+      - name: Generate the index
+        id: gen
+        run: |
+          python3 tooling/.github/scripts/build-repo-index.py \
+            --config tooling/.github/repo-index.json \
+            --db-dir dbs \
+            --out-dir pages
+
+      - name: Commit and push
+        if: steps.gen.outputs.changed == 'true'
+        working-directory: pages
+        env:
+          SUMMARY: ${{ steps.gen.outputs.summary }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A index.html .nojekyll data/
+
+          if git diff --cached --quiet; then
+            echo "Nothing staged after all."
+            exit 0
+          fi
+
+          git commit -m "Update package index: ${SUMMARY}"
+
+          # Retry only the push. This is the one step that can lose a race with
+          # build-repo pushing packages into the same repo, and a rebase onto
+          # the new tip is the correct resolution -- the two touch different
+          # paths.
+          delay=2
+          for attempt in 1 2 3 4 5; do
+            if git push origin main; then
+              echo "Pushed on attempt $attempt."
+              exit 0
+            fi
+            echo "Push failed (attempt $attempt); refetching and rebasing."
+            sleep "$delay"; delay=$((delay * 2))
+            git fetch origin main || true
+            git rebase origin/main || { git rebase --abort || true; }
+          done
+          echo "::error::could not push the index after 5 attempts"
+          exit 1
+
+      - name: Summary
+        if: always()
+        env:
+          CHANGED: ${{ steps.gen.outputs.changed }}
+          SUMMARY: ${{ steps.gen.outputs.summary }}
+          PACKAGES: ${{ steps.gen.outputs.packages }}
+        run: |
+          {
+            echo "### Package index"
+            echo
+            echo "- Packages indexed: ${PACKAGES:-unknown}"
+            echo "- Changes this run: ${SUMMARY:-none}"
+            echo "- Published: ${CHANGED:-false}"
+            echo
+            echo "<https://${{ github.repository_owner }}.github.io/>"
+          } >> "$GITHUB_STEP_SUMMARY"

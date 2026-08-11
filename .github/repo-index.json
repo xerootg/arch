@@ -1,0 +1,30 @@
+{
+  "site": {
+    "title": "Xero's package feed",
+    "tagline": "Prebuilt Arch Linux packages I use or maintain, rebuilt automatically and served straight from GitHub.",
+    "source": "https://github.com/xerootg/arch"
+  },
+  "repos": [
+    {
+      "name": "custom",
+      "server": "https://xerootg.github.io/archlinux",
+      "db": "dbs/custom.db",
+      "note": "The general repo. Built by <code>build-pacman-repo</code> from <code>pkgbuilds/</code> and served as static files from GitHub Pages. Everything small enough to be pushed lives here.",
+      "workflow": "build-repo.yml"
+    },
+    {
+      "name": "ghidra",
+      "server": "https://github.com/xerootg/arch/releases/download/pacman-repo",
+      "db": "dbs/ghidra.db",
+      "note": "Stock Ghidra with the <em>\"would you like to analyze it now?\"</em> prompt moved to a tool option that ships disabled. About 500 MB, which is over GitHub's 100 MB push limit, so it is served from a release rather than Pages.",
+      "workflow": "ghidra-noprompt.yml"
+    },
+    {
+      "name": "orca",
+      "server": "https://github.com/xerootg/arch/releases/download/orca-repo",
+      "db": "dbs/orca.db",
+      "note": "OrcaSlicer, built from git. Around 164 MB, so it is served from a release for the same reason as <code>[ghidra]</code>.",
+      "workflow": "orca-slicer.yml"
+    }
+  ]
+}
