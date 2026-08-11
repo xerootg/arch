@@ -86,11 +86,16 @@ jobs:
 
       - name: Build the package and its pacman database
         if: steps.gate.outputs.build == 'true'
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
           docker run --rm \
             -v "${{ github.workspace }}:/work" \
             -e REPO_NAME="$REPO_NAME" \
+            -e GPG_SIGNING_KEY \
+            -e GPG_PASSPHRASE \
             -w /work \
             archlinux:base-devel \
             bash .github/scripts/build-ghidra-noprompt.sh
@@ -104,37 +109,24 @@ jobs:
           set -euo pipefail
           ls -lh out/
 
+          # Notes live in .github/release-notes/ so the same text is used when the
+          # release is first created and whenever sign-backfill refreshes it.
+          # Inline heredocs could only ever run at creation time, which meant the
+          # published install instructions could never be corrected.
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            cat > release-notes.md <<'EOF'
-          A pacman repository served straight from this release, for packages too
-          large to live in the GitHub Pages repo (GitHub rejects any pushed file
-          over 100 MB).
-
-          Add to `/etc/pacman.conf`:
-
-          ```ini
-          [ghidra]
-          Server = https://github.com/xerootg/arch/releases/download/pacman-repo
-          SigLevel = Optional TrustAll
-          ```
-
-          Then `sudo pacman -Sy ghidra-noprompt`.
-
-          Contains **ghidra-noprompt**: stock Ghidra from the matching upstream
-          release, patched so opening a program that has never been analyzed does
-          not prompt to auto-analyze. See
-          [xerootg/ghidra](https://github.com/xerootg/ghidra) for the patch and
-          the build that produced it. It `provides`/`conflicts` with `ghidra`.
-
-          Assets here are replaced in place on every update; the tag is fixed so
-          the `Server` URL never changes.
-          EOF
             gh release create "$RELEASE_TAG" \
-              --title "pacman repo" --notes-file release-notes.md
+              --title "pacman repo" --notes-file .github/release-notes/ghidra.md
+          else
+            gh release edit "$RELEASE_TAG" --notes-file .github/release-notes/ghidra.md
           fi
 
+          # Signatures go up in the same call as what they sign. Uploading the
+          # package first and the .sig afterwards would leave a window where
+          # pacman fetches a package it cannot verify.
+          shopt -s nullglob
           gh release upload "$RELEASE_TAG" \
             out/ghidra-noprompt-*.pkg.tar.zst \
+            out/*.sig out/xerootg.asc \
             "out/${REPO_NAME}.db" "out/${REPO_NAME}.files" \
             "out/${REPO_NAME}.db.tar.gz" "out/${REPO_NAME}.files.tar.gz" \
             --clobber
@@ -145,8 +137,8 @@ jobs:
           # which under pipefail would fail the step after a successful publish.
           keep="$(basename out/ghidra-noprompt-*.pkg.tar.zst)"
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
-            | { grep -E '^ghidra-noprompt-.*\.pkg\.tar\.zst$' || true; } \
-            | { grep -vxF "$keep" || true; } \
+            | { grep -E '^ghidra-noprompt-.*\.pkg\.tar\.zst(\.sig)?$' || true; } \
+            | { grep -vxF -e "$keep" -e "${keep}.sig" || true; } \
             | while read -r old; do
                 echo "Removing superseded asset $old"
                 gh release delete-asset "$RELEASE_TAG" "$old" --yes

@@ -33,6 +33,8 @@ import hashlib
 import html
 import json
 import os
+import re
+import subprocess
 import sys
 import tarfile
 from datetime import datetime, timezone
@@ -144,6 +146,31 @@ def db_to_rows(repo: str, entries: dict[str, dict[str, list[str]]]) -> dict[str,
 # --------------------------------------------------------------------------
 # time and formatting
 # --------------------------------------------------------------------------
+
+
+def signing_fingerprint(sig_path: str) -> str:
+    """Read the issuer fingerprint out of a detached signature.
+
+    Taken from the signature rather than from config or from the key file,
+    because this is the one source that cannot drift: it is whatever key
+    actually signed the database clients download. No secret is needed -- the
+    issuer is in the cleartext of the signature packet.
+    """
+    try:
+        result = subprocess.run(
+            ["gpg", "--list-packets", sig_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    match = re.search(r"issuer fpr v4 ([0-9A-Fa-f]{40})", result.stdout)
+    if match:
+        return match.group(1).upper()
+    # Older signatures carry only the 64-bit key id.
+    match = re.search(r"keyid ([0-9A-Fa-f]{16})", result.stdout)
+    return match.group(1).upper() if match else ""
 
 
 def epoch_to_utc(value: str) -> str:
@@ -417,25 +444,53 @@ document.querySelectorAll('pre').forEach(function (block) {
 """
 
 
+def siglevel(repo: dict) -> str:
+    """Match Arch's own default once a repo is signed.
+
+    `Required DatabaseOptional` is what stock /etc/pacman.conf uses: every
+    package must carry a signature from a trusted key, and a database
+    signature is verified when present. Validating the database only when
+    present is also what keeps a single missed signing run from locking every
+    client out of the repo.
+    """
+    return "Required DatabaseOptional" if repo.get("signed") else "Optional TrustAll"
+
+
 def pacman_conf_block(repos: list[dict]) -> str:
     lines = []
     for repo in repos:
         lines.append(f"[{repo['name']}]")
         lines.append(f"Server = {repo['server']}")
-        lines.append("SigLevel = Optional TrustAll")
+        lines.append(f"SigLevel = {siglevel(repo)}")
         lines.append("")
     return "\n".join(lines).rstrip()
 
 
-def install_command(repos: list[dict]) -> str:
+KEY_URL = "https://xerootg.github.io/xerootg.asc"
+
+
+def key_import_command(fingerprint: str) -> str:
     return (
+        f"curl -fsSL {KEY_URL} | sudo pacman-key --add -\n"
+        f"sudo pacman-key --lsign-key {fingerprint}"
+    )
+
+
+def install_command(repos: list[dict], fingerprint: str) -> str:
+    parts = []
+    if fingerprint:
+        parts.append(key_import_command(fingerprint))
+        parts.append("")
+    parts.append(
         "sudo tee -a /etc/pacman.conf > /dev/null <<'EOF'\n\n"
         + pacman_conf_block(repos)
         + "\nEOF\nsudo pacman -Sy"
     )
+    return "\n".join(parts)
 
 
-def render(config: dict, packages: list[dict], changes: list[dict], checked: str) -> str:
+def render(config: dict, packages: list[dict], changes: list[dict],
+           checked: str, fingerprint: str) -> str:
     site = config["site"]
     repos = config["repos"]
     by_repo: dict[str, list[dict]] = {}
@@ -480,23 +535,52 @@ def render(config: dict, packages: list[dict], changes: list[dict], checked: str
         '<div><span class="label">Total download</span>'
         f'<span class="value">{human_bytes(str(total_bytes))}</span></div>'
     )
+    if fingerprint:
+        add(
+            '<div><span class="label">Signed by</span>'
+            f'<span class="value"><code>{html.escape(fingerprint[-16:])}</code></span></div>'
+        )
     add("</div>")
 
     # --- install ---------------------------------------------------------
+    signed = [r for r in repos if r.get("signed")]
     add('<h2 id="install">Adding these repos</h2>')
-    add(
-        '<p class="note">Paste this into a terminal. It appends all '
-        f"{len(repos)} repositories to <code>/etc/pacman.conf</code> and refreshes "
-        "the package lists.</p>"
-    )
-    add(f"<pre><code>{html.escape(install_command(repos))}</code></pre>")
+    if fingerprint:
+        add(
+            '<p class="note">Paste this into a terminal. It trusts the signing key, '
+            f"appends all {len(repos)} repositories to <code>/etc/pacman.conf</code>, "
+            "and refreshes the package lists.</p>"
+        )
+    else:
+        add(
+            '<p class="note">Paste this into a terminal. It appends all '
+            f"{len(repos)} repositories to <code>/etc/pacman.conf</code> and refreshes "
+            "the package lists.</p>"
+        )
+    add(f"<pre><code>{html.escape(install_command(repos, fingerprint))}</code></pre>")
+
+    if fingerprint:
+        add(
+            '<p class="note"><strong>Why the key step:</strong> pacman keeps its own '
+            "keyring, separate from your user GPG keyring. <code>--add</code> imports "
+            "the key; <code>--lsign-key</code> is the part people miss \u2014 it signs "
+            "the key locally to mark it trusted, and without it pacman still refuses "
+            "every package with <em>unknown trust</em>. The fingerprint is "
+            f"<code>{html.escape(fingerprint)}</code>; you can check it against "
+            f'<a href="{html.escape(KEY_URL)}">the published key</a>.</p>'
+        )
     add(
         '<p class="note">Or edit <code>/etc/pacman.conf</code> by hand and add whichever '
-        "you want. The packages are unsigned, which is what "
-        "<code>SigLevel = Optional TrustAll</code> allows; the server URLs never "
-        "change, so this is a one-time edit.</p>"
+        "you want. The server URLs never change, so this is a one-time edit.</p>"
     )
     add(f"<pre><code>{html.escape(pacman_conf_block(repos))}</code></pre>")
+    if signed and len(signed) != len(repos):
+        unsigned = ", ".join(f"<code>[{r['name']}]</code>" for r in repos if not r.get("signed"))
+        add(
+            f'<p class="stale">{unsigned} is not signed yet, so it stays on '
+            "<code>Optional TrustAll</code> until its next publish. The others "
+            "require a valid signature on every package.</p>"
+        )
 
     # --- per repo --------------------------------------------------------
     for repo in repos:
@@ -506,7 +590,7 @@ def render(config: dict, packages: list[dict], changes: list[dict], checked: str
             f'<span class="count">{len(rows)} package{"" if len(rows) == 1 else "s"}</span></h2>')
         add(f'<p class="note">{repo["note"]}</p>')
         add(f"<pre><code>[{html.escape(name)}]\nServer = {html.escape(repo['server'])}"
-            "\nSigLevel = Optional TrustAll</code></pre>")
+            f"\nSigLevel = {siglevel(repo)}</code></pre>")
 
         if not rows:
             add('<p class="stale">Nothing recorded for this repo yet.</p>')
@@ -588,7 +672,7 @@ def render(config: dict, packages: list[dict], changes: list[dict], checked: str
 # --------------------------------------------------------------------------
 
 
-def digest(packages: list[dict], changes: list[dict]) -> str:
+def digest(packages: list[dict], changes: list[dict], signing: list) -> str:
     """Fingerprint the data, ignoring the check timestamp.
 
     Only this decides whether there is anything worth committing, so a run that
@@ -599,6 +683,7 @@ def digest(packages: list[dict], changes: list[dict]) -> str:
         {
             "packages": [[row[key] for key in PACKAGE_FIELDS] for row in packages],
             "changes": len(changes),
+            "signing": signing,
         },
         sort_keys=True,
     )
@@ -638,8 +723,18 @@ def main() -> int:
     observed: dict[str, dict[str, dict]] = {}
     available: set[str] = set()
     missing: list[str] = []
+    fingerprint = ""
     for repo in config["repos"]:
         path = os.path.join(args.db_dir, os.path.basename(repo["db"]))
+        # A repo counts as signed when its database signature is present and
+        # names an issuer. That is the same file pacman checks, so the page
+        # cannot advertise SigLevel = Required for a repo that would fail it.
+        repo["signed"] = False
+        if os.path.exists(path + ".sig"):
+            issuer = signing_fingerprint(path + ".sig")
+            if issuer:
+                repo["signed"] = True
+                fingerprint = fingerprint or issuer
         if not os.path.exists(path) or os.path.getsize(path) == 0:
             missing.append(repo["name"])
             print(f"::warning::no database for [{repo['name']}] at {path}; "
@@ -660,7 +755,10 @@ def main() -> int:
     packages, events = reconcile(known, observed, available, now, seeding)
     changes = (changes + events)[-MAX_CHANGES:]
 
-    new_digest = digest(packages, changes)
+    signing_state = [fingerprint] + [
+        [r["name"], bool(r.get("signed"))] for r in config["repos"]
+    ]
+    new_digest = digest(packages, changes, signing_state)
     old_digest = state.get("data_digest", "")
     last_checked = state.get("last_checked_utc", "")
     stale = True
@@ -692,7 +790,7 @@ def main() -> int:
             )
             handle.write("\n")
         with open(os.path.join(args.out_dir, "index.html"), "w", encoding="utf-8") as handle:
-            handle.write(render(config, packages, changes, now))
+            handle.write(render(config, packages, changes, now, fingerprint))
         # Static serving. Without this GitHub runs the site through Jekyll on
         # every push, which would be a build step standing between a published
         # package and its availability -- and this repo's real job is serving
@@ -708,7 +806,12 @@ def main() -> int:
     if missing:
         summary += f" (no database for: {', '.join(sorted(missing))})"
 
-    print(f"{len(packages)} packages across {len(available)} repo(s); {summary}")
+    signed_names = [r["name"] for r in config["repos"] if r.get("signed")]
+    print(
+        f"{len(packages)} packages across {len(available)} repo(s); {summary}; "
+        f"signed: {', '.join(signed_names) if signed_names else 'none'}"
+        + (f" (key {fingerprint})" if fingerprint else "")
+    )
     for event in events:
         print(
             f"  {event['event']:8} [{event['repo']}] {event['pkgname']} "
@@ -721,6 +824,7 @@ def main() -> int:
             handle.write(f"changed={'true' if changed else 'false'}\n")
             handle.write(f"summary={summary}\n")
             handle.write(f"packages={len(packages)}\n")
+            handle.write(f"fingerprint={fingerprint}\n")
 
     return 0
 

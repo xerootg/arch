@@ -7,12 +7,24 @@ below — versions, sizes, build dates, when each package was first published, a
 a rolling changelog. It is generated rather than written; see
 [the package index](#the-package-index).
 
-Use these packages by adding this to your `pacman.conf`:
+Packages are signed. Trust the key once, then add the repo to your
+`pacman.conf`:
+
+```bash
+curl -fsSL https://xerootg.github.io/xerootg.asc | sudo pacman-key --add -
+sudo pacman-key --lsign-key "$(curl -fsSL https://xerootg.github.io/xerootg.asc \
+  | gpg --show-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')"
+```
+
 ```ini
 [custom]
 Server = https://xerootg.github.io/archlinux
-SigLevel = Optional TrustAll
+SigLevel = Required DatabaseOptional
 ```
+
+`--lsign-key` is the step people miss: `--add` imports the key, but pacman still
+refuses every package until the key is locally signed as trusted. The site
+carries the same snippet with the fingerprint filled in.
 
 ## `[ghidra]` — the oversized-package repo
 
@@ -23,7 +35,7 @@ directly out of a GitHub Release on this repository:
 ```ini
 [ghidra]
 Server = https://github.com/xerootg/arch/releases/download/pacman-repo
-SigLevel = Optional TrustAll
+SigLevel = Required DatabaseOptional
 ```
 
 Then `sudo pacman -Sy ghidra-noprompt`.
@@ -62,7 +74,7 @@ its own release-hosted repo:
 ```ini
 [orca]
 Server = https://github.com/xerootg/arch/releases/download/orca-repo
-SigLevel = Optional TrustAll
+SigLevel = Required DatabaseOptional
 ```
 
 Then `sudo pacman -Sy orca-slicer-git`.
@@ -132,3 +144,74 @@ two of them never check out the Pages repo. One writer avoids the race.
 The site carries a `.nojekyll`, so Pages serves it statically. There is no build
 step between publishing a package and it being downloadable, which matters when
 the site is mostly a few hundred megabytes of `.pkg.tar.zst`.
+
+## Package signing
+
+Every package and database is signed, so clients can run `SigLevel = Required
+DatabaseOptional` — the same setting stock `/etc/pacman.conf` uses — instead of
+`Optional TrustAll`. The current fingerprint and a ready-to-paste import command
+are on [xerootg.github.io](https://xerootg.github.io/); the public key is served
+at [`/xerootg.asc`](https://xerootg.github.io/xerootg.asc).
+
+`.github/scripts/sign-pacman-repo.sh` does all of it, for all three repos. It
+needs only gpg and coreutils, so the same script runs inside the Arch build
+containers and directly on the Ubuntu runner for backfills.
+
+Two things drove the design:
+
+**`build-pacman-repo` cannot sign.** It shells out to `repo-add --quiet
+--nocolor` with no way to pass `--sign`, and has no GPG support at all. So
+signing is a separate pass over the repository directory rather than something
+threaded through the builder.
+
+**A pass over the directory is also the only correct approach.** Once
+`SigLevel = Required` is in play, pacman wants a `.sig` beside *every* package,
+including ones that were not rebuilt this run. Signing only what a build
+produced would leave the untouched packages permanently unverifiable.
+
+The script is idempotent and rotation-aware: an existing signature is kept only
+if it still verifies against the key currently loaded, so changing the secret
+and re-running re-signs whatever no longer checks out.
+
+### The stale-signature trap
+
+The database is rewritten on every build. If the signing key were ever missing
+while signatures were already present, the old `.db.sig` would no longer match
+the new `.db`, and pacman rejects a repo with a *bad* database signature far
+more harshly than one with none — every client breaks at once. The script
+refuses to run in that state rather than publishing it.
+
+### Backfilling and rotation
+
+`.github/workflows/sign-backfill.yml` signs what is already published without
+rebuilding it. The release-hosted repos only rebuild when upstream moves —
+ghidra roughly monthly — so without this, turning signing on would leave those
+packages unverifiable for weeks. It downloads the release assets, signs
+whatever is missing or stale, uploads the `.sig` files, and refreshes the
+release notes. It is also the tool to run after rotating the key.
+
+Release notes now live in `.github/release-notes/`. They used to be inline
+heredocs that only ran when a release was first created, which meant the
+install instructions published on an existing release could never be corrected.
+
+### What the site does with it
+
+`build-repo-index.py` reads the issuer fingerprint out of each `<repo>.db.sig`
+with `gpg --list-packets`. No secret is involved — the issuer is cleartext in
+the signature packet — and it is the one source that cannot drift, because it
+is whatever key actually signed the database clients download. A repo is
+advertised as `Required` only when its own database signature verifies as
+present, so the page can never tell someone to enable a setting that would
+then reject the repo.
+
+### Secrets
+
+| secret | contents |
+|---|---|
+| `GPG_SIGNING_KEY` | ASCII-armoured **signing subkey**, secret half |
+| `GPG_PASSPHRASE` | passphrase for it |
+
+Repository-level secrets, so all four workflows can read them. Only the signing
+subkey is exported — the certifying primary key stays offline, so a compromise
+of CI costs a subkey that can be revoked without abandoning the identity or
+asking every user to re-trust a new fingerprint.

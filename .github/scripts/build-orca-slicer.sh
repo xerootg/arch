@@ -21,7 +21,7 @@ OUTDIR=/work/orca-out
 REPO_NAME="${REPO_NAME:-orca}"
 
 pacman -Syu --noconfirm --needed --disable-download-timeout \
-  archlinux-keyring base-devel git curl
+  archlinux-keyring base-devel git curl gnupg
 
 # Keep the large window: these packages carry thousands of near-identical
 # printer profiles and mesh resources, and level 19's 8 MiB window was measured
@@ -153,6 +153,12 @@ for ext in db files; do
   rm -f "${REPO_NAME}.${ext}"
   cp "${REPO_NAME}.${ext}.tar.gz" "${REPO_NAME}.${ext}"
 done
+
+# Sign the packages and the database. Must come after the symlinks above are
+# replaced with real files, so the .sig covers the bytes pacman downloads.
+export SIGN_REPORT=/work/.sign-report
+export PUBKEY_OUT="$OUTDIR/xerootg.asc"
+bash /work/.github/scripts/sign-pacman-repo.sh "$OUTDIR" "$REPO_NAME"
 
 # Everything above ran as root; hand the results back to the runner user and
 # drop the build tree it cannot remove itself.

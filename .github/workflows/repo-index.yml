@@ -71,8 +71,11 @@ jobs:
           mkdir -p dbs
 
           # [custom] is served from Pages, so its database is already checked out.
+          # The .sig comes along too: the generator reads the issuer out of it to
+          # decide whether the page may advertise SigLevel = Required.
           if [ -f pages/archlinux/custom.db ]; then
             cp pages/archlinux/custom.db dbs/custom.db
+            [ -f pages/archlinux/custom.db.sig ] && cp pages/archlinux/custom.db.sig dbs/
           else
             echo "::warning::pages/archlinux/custom.db is missing"
           fi
@@ -87,6 +90,9 @@ jobs:
             else
               echo "::warning::could not download ${name}.db from release $tag"
             fi
+            # Absent before that repo's first signed publish; not an error.
+            gh release download "$tag" --pattern "${name}.db.sig" --dir dbs --clobber \
+              || echo "no signature published for [$name] yet"
           done
 
           ls -l dbs/

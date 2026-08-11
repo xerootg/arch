@@ -16,7 +16,7 @@ OUTDIR=/work/out
 REPO_NAME="${REPO_NAME:-ghidra}"
 
 pacman -Syu --noconfirm --needed --disable-download-timeout \
-  archlinux-keyring base-devel curl
+  archlinux-keyring base-devel curl gnupg
 
 # The payload is a zip full of already-compressed jars. Level 20 spends many
 # minutes to gain a percent or two over level 10.
@@ -50,6 +50,12 @@ for ext in db files; do
   rm -f "${REPO_NAME}.${ext}"
   cp "${REPO_NAME}.${ext}.tar.gz" "${REPO_NAME}.${ext}"
 done
+
+# Sign the package and the database. Must come after the symlinks above are
+# replaced with real files, so the .sig covers the bytes pacman downloads.
+export SIGN_REPORT=/work/.sign-report
+export PUBKEY_OUT="$OUTDIR/xerootg.asc"
+bash /work/.github/scripts/sign-pacman-repo.sh "$OUTDIR" "$REPO_NAME"
 
 # Everything below runs as root inside the container, so the runner user cannot
 # clean up after us. Drop the build tree here and leave the results writable.

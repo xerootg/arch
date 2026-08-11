@@ -107,11 +107,16 @@ jobs:
 
       - name: Build the packages and their pacman database
         if: steps.gate.outputs.build == 'true'
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
           docker run --rm \
             -v "${{ github.workspace }}:/work" \
             -e REPO_NAME="$REPO_NAME" \
+            -e GPG_SIGNING_KEY \
+            -e GPG_PASSPHRASE \
             -w /work \
             archlinux:base-devel \
             bash .github/scripts/build-orca-slicer.sh
@@ -136,39 +141,21 @@ jobs:
           set -euo pipefail
           ls -lh orca-out/
 
+          # Notes live in .github/release-notes/ so the same text is used at
+          # creation and whenever sign-backfill refreshes it.
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            cat > orca-notes.md <<'EOF'
-          A pacman repository served straight from this release.
-
-          `orca-slicer-git` compresses to around 164 MB, and GitHub refuses any
-          pushed file over 100 MB, so it cannot live in the GitHub Pages repo
-          that serves `[custom]`. Release assets have a 2 GB limit, so it lives
-          here instead.
-
-          Add to `/etc/pacman.conf`:
-
-          ```ini
-          [orca]
-          Server = https://github.com/xerootg/arch/releases/download/orca-repo
-          SigLevel = Optional TrustAll
-          ```
-
-          Then `sudo pacman -Sy orca-slicer-git`.
-
-          Provides `orca-slicer-git` and `orca-slicer-git-extras` (calibration
-          models, daily tips and the profile validator). The main package
-          `provides`/`conflicts` with `orca-slicer`.
-
-          Assets are replaced in place on every update and superseded builds are
-          deleted, so this release holds one revision at a time. The tag is
-          fixed, so the `Server` URL never changes.
-          EOF
             gh release create "$RELEASE_TAG" \
-              --title "orca-slicer pacman repo" --notes-file orca-notes.md
+              --title "orca-slicer pacman repo" --notes-file .github/release-notes/orca.md
+          else
+            gh release edit "$RELEASE_TAG" --notes-file .github/release-notes/orca.md
           fi
 
+          # Signatures go up in the same call as what they sign, so there is no
+          # window where pacman can fetch a package it cannot verify.
+          shopt -s nullglob
           gh release upload "$RELEASE_TAG" \
             orca-out/orca-slicer-git-*.pkg.tar.zst \
+            orca-out/*.sig orca-out/xerootg.asc \
             "orca-out/${REPO_NAME}.db" "orca-out/${REPO_NAME}.files" \
             "orca-out/${REPO_NAME}.db.tar.gz" "orca-out/${REPO_NAME}.files.tar.gz" \
             --clobber
@@ -176,9 +163,9 @@ jobs:
           # Drop superseded packages, but only once the new ones are up. Both
           # greps come up empty in the steady state, and an empty grep exits 1,
           # which under pipefail would fail a run that already published fine.
-          keep="$(cd orca-out && ls orca-slicer-git-*.pkg.tar.zst | tr '\n' '|')"
+          keep="$(cd orca-out && ls orca-slicer-git-*.pkg.tar.zst orca-slicer-git-*.pkg.tar.zst.sig | tr '\n' '|')"
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
-            | { grep -E '^orca-slicer-git.*\.pkg\.tar\.zst$' || true; } \
+            | { grep -E '^orca-slicer-git.*\.pkg\.tar\.zst(\.sig)?$' || true; } \
             | { grep -vE "^(${keep%|})$" || true; } \
             | while read -r old; do
                 echo "Removing superseded asset $old"

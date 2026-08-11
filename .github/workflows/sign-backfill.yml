@@ -1,0 +1,134 @@
+---
+name: sign-backfill
+
+# Signs packages that are already published, without rebuilding them.
+#
+# The two release-hosted repos only rebuild when upstream changes -- ghidra
+# roughly monthly, orca whenever OrcaSlicer's git head moves -- so turning on
+# signing does not by itself get a .sig next to what is already there. Until
+# every package has one, `SigLevel = Required` fails for anybody who has added
+# the repo, so this closes the gap immediately instead of over the next month.
+#
+# It is also the key-rotation tool: sign-pacman-repo.sh keeps an existing
+# signature only if it still verifies against the key currently loaded, so
+# after changing the secret this re-signs everything that no longer checks out.
+#
+# Runs on the Ubuntu runner. Signing needs gpg and nothing else -- no Arch
+# container, and no repo-add, because adding a .sig beside a package does not
+# change the database's contents.
+#
+# [custom] is not here: build-repo.yml signs its whole directory on every run,
+# including packages it did not rebuild, so it backfills itself.
+
+on:
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: "Which release repos to sign"
+        type: choice
+        default: "both"
+        options: ["both", "ghidra", "orca"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "${{ github.workflow }}"
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      # Serial: both jobs push assets to releases on this same repository, and
+      # a failure on one should not leave the other half-done in parallel.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include:
+          - name: ghidra
+            tag: pacman-repo
+          - name: orca
+            tag: orca-repo
+    steps:
+      - name: Should this repo run?
+        id: want
+        run: |
+          set -euo pipefail
+          want=false
+          if [ "${{ inputs.repos }}" = "both" ] || [ "${{ inputs.repos }}" = "${{ matrix.name }}" ]; then
+            want=true
+          fi
+          echo "run=$want" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: steps.want.outputs.run == 'true'
+        uses: actions/checkout@v7
+
+      - name: Download the published assets
+        if: steps.want.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p "work/${{ matrix.name }}"
+          # Everything, including any existing .sig -- the signer verifies those
+          # and keeps the ones that are still good.
+          gh release download "${{ matrix.tag }}" --dir "work/${{ matrix.name }}" --clobber
+          ls -lh "work/${{ matrix.name }}"
+          df -h / | tail -1
+
+      - name: Sign
+        if: steps.want.outputs.run == 'true'
+        id: sign
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          SIGN_REPORT: ${{ github.workspace }}/sign-report
+          PUBKEY_OUT: ${{ github.workspace }}/work/${{ matrix.name }}/xerootg.asc
+        run: |
+          set -euo pipefail
+          bash .github/scripts/sign-pacman-repo.sh "work/${{ matrix.name }}" "${{ matrix.name }}"
+          cat sign-report >> "$GITHUB_OUTPUT"
+
+      - name: Upload the signatures
+        if: steps.want.outputs.run == 'true' && steps.sign.outputs.signed != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd "work/${{ matrix.name }}"
+          shopt -s nullglob
+          files=(*.sig xerootg.asc)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "Nothing to upload."
+            exit 0
+          fi
+          echo "Uploading ${#files[@]} file(s): ${files[*]}"
+          gh release upload "${{ matrix.tag }}" "${files[@]}" --clobber
+
+      - name: Refresh the release notes
+        if: steps.want.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The install snippet in the notes still says SigLevel = Optional
+          # TrustAll on releases created before signing existed.
+          gh release edit "${{ matrix.tag }}" \
+            --notes-file ".github/release-notes/${{ matrix.name }}.md"
+
+      - name: Summary
+        if: always() && steps.want.outputs.run == 'true'
+        run: |
+          {
+            echo "### [${{ matrix.name }}] signature backfill"
+            echo
+            echo "- New signatures: ${{ steps.sign.outputs.signed || 'n/a' }}"
+            echo "- Orphans removed: ${{ steps.sign.outputs.removed || 'n/a' }}"
+            echo "- Key: \`${{ steps.sign.outputs.fingerprint || 'none configured' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

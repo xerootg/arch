@@ -7,6 +7,7 @@ pacman -Syu --disable-download-timeout --needed --noconfirm \
   archlinux-keyring \
   base-devel \
   git \
+  gnupg \
   reflector \
   wget \
   rust \
@@ -98,23 +99,20 @@ echo "🔍 Debug: Running outdated check with full details:"
 build-pacman-repo outdated --details lossy-yaml || true
 
 echo ""
+REPO_DIR="/workspace/github-pages/archlinux"
+test -d "$REPO_DIR" || { echo "cannot find the gh pages repo, exiting"; exit 1; }
+
 OUTDATED=$(build-pacman-repo outdated --details pkgname)
+BUILT=false
 if [ -z "$OUTDATED" ]; then
   echo "✅ All packages are up-to-date, nothing to build"
-  echo "has_outdated=false" >> /workspace/.github-output
 else
   echo "📦 Outdated packages to build:"
   echo "$OUTDATED"
-  echo "has_outdated=true" >> /workspace/.github-output
-  # Convert newline-separated package names to comma-separated list for commit message
-  PACKAGE_LIST=$(echo "$OUTDATED" | tr '\n' ',' | sed 's/,$//')
-  echo "packages=$PACKAGE_LIST" >> /workspace/.github-output
-  chmod ugo+r /workspace/.github-output
   # Build if outdated
-  test -d /workspace/github-pages/archlinux || (echo "cannot find the gh pages repo, exiting" && exit 1)
   build-pacman-repo build || (echo "build-pacman-repo failed" && tree -lah pkgbuilds/ -I "src|pkg|.git|.cache" && exit 2)
+  BUILT=true
   # Verify packages
-  REPO_DIR="/workspace/github-pages/archlinux"
   echo ""
   echo ""
   echo "📦 Packages in repository:"
@@ -130,3 +128,34 @@ else
     echo "$(basename "$pkg") - ${size_mb}MB"
   done
 fi
+
+# Sign unconditionally, whether or not anything was rebuilt.
+#
+# build-pacman-repo cannot do this itself: it calls `repo-add --quiet --nocolor`
+# with no way to pass --sign, and it knows nothing about GPG. Signing here also
+# covers the packages that were already in the repo and were not rebuilt this
+# run -- pacman wants a .sig beside every package once SigLevel is Required,
+# and an untouched package would otherwise never get one.
+echo ""
+echo "🔏 Signing the repository..."
+export SIGN_REPORT=/workspace/.sign-report
+export PUBKEY_OUT=/workspace/github-pages/xerootg.asc
+bash /workspace/repo/.github/scripts/sign-pacman-repo.sh "$REPO_DIR" custom
+
+SIGNED=$(sed -n 's/^signed=//p' "$SIGN_REPORT" 2>/dev/null || true)
+REMOVED=$(sed -n 's/^removed=//p' "$SIGN_REPORT" 2>/dev/null || true)
+SIGNED=${SIGNED:-0}
+REMOVED=${REMOVED:-0}
+
+# The Pages repo is worth pushing if packages changed *or* signatures did.
+if [ "$BUILT" = true ]; then
+  PACKAGE_LIST=$(echo "$OUTDATED" | tr '\n' ',' | sed 's/,$//')
+  echo "has_outdated=true" >> /workspace/.github-output
+  echo "packages=$PACKAGE_LIST" >> /workspace/.github-output
+elif [ "$SIGNED" -gt 0 ] || [ "$REMOVED" -gt 0 ]; then
+  echo "has_outdated=true" >> /workspace/.github-output
+  echo "packages=signatures ($SIGNED signed, $REMOVED removed)" >> /workspace/.github-output
+else
+  echo "has_outdated=false" >> /workspace/.github-output
+fi
+chmod ugo+r /workspace/.github-output
