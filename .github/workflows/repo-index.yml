@@ -100,9 +100,13 @@ jobs:
       - name: Generate the index
         id: gen
         run: |
+          # --pubkey is the key users are told to trust; the .db.sig files decide
+          # whether a repo is advertised as signed at all. The generator fails
+          # if the two disagree.
           python3 tooling/.github/scripts/build-repo-index.py \
             --config tooling/.github/repo-index.json \
             --db-dir dbs \
+            --pubkey pages/xerootg.asc \
             --out-dir pages
 
       - name: Commit and push

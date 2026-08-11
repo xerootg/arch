@@ -173,6 +173,37 @@ def signing_fingerprint(sig_path: str) -> str:
     return match.group(1).upper() if match else ""
 
 
+def public_key_fingerprints(path: str) -> tuple[str, set[str]]:
+    """Return (primary fingerprint, all fingerprints) from a public key file.
+
+    The signature packet names the *subkey* that signed, but `pacman-key
+    --lsign-key` wants the primary. Publishing the subkey fingerprint would
+    mostly work -- gpg resolves a subkey to its primary on lookup -- but it is
+    the wrong thing to tell someone to type, and it varies by gpg version.
+    """
+    if not path or not os.path.exists(path):
+        return "", set()
+    try:
+        result = subprocess.run(
+            ["gpg", "--show-keys", "--with-colons", path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "", set()
+    primary = ""
+    everything: set[str] = set()
+    for line in result.stdout.splitlines():
+        if line.startswith("fpr:"):
+            fields = line.split(":")
+            if len(fields) > 9 and fields[9]:
+                everything.add(fields[9].upper())
+                if not primary:
+                    primary = fields[9].upper()
+    return primary, everything
+
+
 def epoch_to_utc(value: str) -> str:
     try:
         return (
@@ -696,6 +727,11 @@ def main() -> int:
     parser.add_argument("--db-dir", required=True, help="directory holding the .db files")
     parser.add_argument("--out-dir", required=True, help="Pages checkout to write into")
     parser.add_argument(
+        "--pubkey",
+        default="",
+        help="published public key, used for the fingerprint users must lsign",
+    )
+    parser.add_argument(
         "--github-output",
         default=os.environ.get("GITHUB_OUTPUT"),
         help="where to write the changed=/summary= step outputs",
@@ -720,10 +756,15 @@ def main() -> int:
     seeding = not known and not changes
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # The fingerprint on the page is the primary, taken from the published key.
+    # The signatures decide *whether* a repo is signed; this decides what to
+    # tell people to trust.
+    fingerprint, key_members = public_key_fingerprints(args.pubkey)
+
     observed: dict[str, dict[str, dict]] = {}
     available: set[str] = set()
     missing: list[str] = []
-    fingerprint = ""
+    issuers: set[str] = set()
     for repo in config["repos"]:
         path = os.path.join(args.db_dir, os.path.basename(repo["db"]))
         # A repo counts as signed when its database signature is present and
@@ -734,6 +775,9 @@ def main() -> int:
             issuer = signing_fingerprint(path + ".sig")
             if issuer:
                 repo["signed"] = True
+                issuers.add(issuer)
+                # Falls back to the issuer only when no public key was supplied,
+                # so the page still shows something useful rather than nothing.
                 fingerprint = fingerprint or issuer
         if not os.path.exists(path) or os.path.getsize(path) == 0:
             missing.append(repo["name"])
@@ -752,10 +796,23 @@ def main() -> int:
         print("::error::no repo database could be read; refusing to rewrite the index")
         return 1
 
+    # If the key being advertised did not sign these databases, the install
+    # instructions would tell people to trust a key that cannot verify anything.
+    # Say so loudly rather than publishing a page that quietly does not work.
+    if key_members:
+        strangers = issuers - key_members
+        if strangers:
+            print(
+                "::error::the published key " + fingerprint + " does not contain "
+                "the signing key(s) " + ", ".join(sorted(strangers)) + "; the "
+                "install instructions would not verify. Refusing to publish."
+            )
+            return 1
+
     packages, events = reconcile(known, observed, available, now, seeding)
     changes = (changes + events)[-MAX_CHANGES:]
 
-    signing_state = [fingerprint] + [
+    signing_state = [fingerprint, sorted(issuers)] + [
         [r["name"], bool(r.get("signed"))] for r in config["repos"]
     ]
     new_digest = digest(packages, changes, signing_state)
