@@ -150,20 +150,35 @@ jobs:
             gh release edit "$RELEASE_TAG" --notes-file .github/release-notes/orca.md
           fi
 
+          # Build the upload list from files that actually exist. gh treats every
+          # argument as a pattern and fails the whole call on one that matches
+          # nothing, so naming the signing artifacts unconditionally threw away a
+          # finished 2.5 hour build the first time this ran without the signing
+          # secrets configured. nullglob covers *.sig but not a literal path.
+          uploads=(
+            orca-out/orca-slicer-git-*.pkg.tar.zst
+            "orca-out/${REPO_NAME}.db" "orca-out/${REPO_NAME}.files"
+            "orca-out/${REPO_NAME}.db.tar.gz" "orca-out/${REPO_NAME}.files.tar.gz"
+          )
+          shopt -s nullglob
+          uploads+=( orca-out/*.sig )
+          shopt -u nullglob
+          [ -f orca-out/xerootg.asc ] && uploads+=( orca-out/xerootg.asc )
+
           # Signatures go up in the same call as what they sign, so there is no
           # window where pacman can fetch a package it cannot verify.
-          shopt -s nullglob
-          gh release upload "$RELEASE_TAG" \
-            orca-out/orca-slicer-git-*.pkg.tar.zst \
-            orca-out/*.sig orca-out/xerootg.asc \
-            "orca-out/${REPO_NAME}.db" "orca-out/${REPO_NAME}.files" \
-            "orca-out/${REPO_NAME}.db.tar.gz" "orca-out/${REPO_NAME}.files.tar.gz" \
-            --clobber
+          printf 'uploading: %s\n' "${uploads[@]}"
+          gh release upload "$RELEASE_TAG" "${uploads[@]}" --clobber
 
           # Drop superseded packages, but only once the new ones are up. Both
           # greps come up empty in the steady state, and an empty grep exits 1,
           # which under pipefail would fail a run that already published fine.
-          keep="$(cd orca-out && ls orca-slicer-git-*.pkg.tar.zst orca-slicer-git-*.pkg.tar.zst.sig | tr '\n' '|')"
+          # Same trap: with no signatures on disk the .sig glob matches nothing,
+          # and `ls` on a missing path exits non-zero, which under set -e would
+          # fail a run that has already published successfully.
+          keep="$(cd orca-out && shopt -s nullglob && \
+            printf '%s\n' orca-slicer-git-*.pkg.tar.zst orca-slicer-git-*.pkg.tar.zst.sig \
+            | tr '\n' '|')"
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
             | { grep -E '^orca-slicer-git.*\.pkg\.tar\.zst(\.sig)?$' || true; } \
             | { grep -vE "^(${keep%|})$" || true; } \

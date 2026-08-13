@@ -120,16 +120,24 @@ jobs:
             gh release edit "$RELEASE_TAG" --notes-file .github/release-notes/ghidra.md
           fi
 
-          # Signatures go up in the same call as what they sign. Uploading the
-          # package first and the .sig afterwards would leave a window where
-          # pacman fetches a package it cannot verify.
+          # Only files that exist: gh treats each argument as a pattern and fails
+          # the whole call on one that matches nothing, and the signing
+          # artifacts are absent until the signing secrets are configured.
+          # nullglob covers *.sig but not a literal path.
+          uploads=(
+            out/ghidra-noprompt-*.pkg.tar.zst
+            "out/${REPO_NAME}.db" "out/${REPO_NAME}.files"
+            "out/${REPO_NAME}.db.tar.gz" "out/${REPO_NAME}.files.tar.gz"
+          )
           shopt -s nullglob
-          gh release upload "$RELEASE_TAG" \
-            out/ghidra-noprompt-*.pkg.tar.zst \
-            out/*.sig out/xerootg.asc \
-            "out/${REPO_NAME}.db" "out/${REPO_NAME}.files" \
-            "out/${REPO_NAME}.db.tar.gz" "out/${REPO_NAME}.files.tar.gz" \
-            --clobber
+          uploads+=( out/*.sig )
+          shopt -u nullglob
+          [ -f out/xerootg.asc ] && uploads+=( out/xerootg.asc )
+
+          # Signatures go up in the same call as what they sign, so there is no
+          # window where pacman fetches a package it cannot verify.
+          printf 'uploading: %s\n' "${uploads[@]}"
+          gh release upload "$RELEASE_TAG" "${uploads[@]}" --clobber
 
           # Drop superseded package assets, but only after the new one is up.
           # In the steady state both greps come up empty -- there is one package
