@@ -26,3 +26,104 @@ members:
     allow-failure: true
   - directory: kwin-scripts-xeros-tiling-window-manager
   - directory: ipscan
+
+  # ---------------------------------------------------------------------
+  # Added 2026-08-19. Directories are cloned from the AUR at build time by
+  # build-inside-container.sh when not already present, so these need not be
+  # git submodules. Ordered so dependencies precede their dependents: yay
+  # resolves AUR deps itself, but building a dep as a member first avoids
+  # building it twice.
+  # ---------------------------------------------------------------------
+
+  # allow-failure on every one of these for the initial rollout. The global
+  # setting is false, which means one bad PKGBUILD fails the whole run and
+  # nothing publishes -- including the five packages that already work. These
+  # 22 have never been built here, so containing a failure to the package that
+  # caused it matters more than strictness right now. build-pacman-repo records
+  # what failed in failed-builds.yaml. Tighten to false per package once each
+  # has gone green.
+  #
+  # This contains ordinary build failures only. An OOM kills the container
+  # outright and no allow-failure setting can catch that, which is exactly why
+  # the heavy packages below are excluded rather than merely permitted to fail.
+
+  # build2 toolchain, then the xsd stack that needs it
+  - directory: build2
+    allow-failure: true
+  - directory: libcutl
+    allow-failure: true
+  - directory: libxsd
+    allow-failure: true
+  - directory: libxsd-frontend
+    allow-failure: true
+  - directory: xsd
+    allow-failure: true
+  - directory: libkolabxml
+    allow-failure: true
+
+  # authentik: cli first, then the two that depend on it, then sysd
+  - directory: authentik-cli-git
+    allow-failure: true
+  - directory: authentik-agent-git
+    allow-failure: true
+  - directory: authentik-browser-support-git
+    allow-failure: true
+  - directory: authentik-sysd-git
+    allow-failure: true
+
+  # small C/C++ and Qt bits
+  - directory: libpthread-stubs
+    allow-failure: true
+  - directory: libkcompactdisc
+    allow-failure: true
+  - directory: accounts-qml-module
+    allow-failure: true
+  - directory: litehtml0.9
+    allow-failure: true
+
+  # python leaves
+  - directory: python-async-timeout
+    allow-failure: true
+  - directory: python-ffmpy
+    allow-failure: true
+  - directory: python-librespot
+    allow-failure: true
+  - directory: python-music-tag
+    allow-failure: true
+  - directory: python-pdm-pep517
+    allow-failure: true
+  - directory: python-pwinput
+    allow-failure: true
+  - directory: python-pytest-http-snapshot
+    allow-failure: true
+
+  # powershell builds against the official dotnet-sdk-10.0, so it needs no
+  # preview SDK. Flagged rather than trusted: the built package may land near
+  # the 100 MB push limit, and the size guard in build-inside-container.sh will
+  # name it and stop the run rather than let the push fail.
+  - directory: powershell
+    allow-failure: true
+
+  # Deliberately NOT members. Each would break this pipeline rather than merely
+  # fail on its own: a package over 100 MB makes the Pages push fail outright
+  # and takes every other package's update with it, and an OOM kills the
+  # container rather than returning a status `allow-failure` could contain.
+  #
+  #  electron37
+  #    A full Chromium source build (makedepends: gn, clang, gperf). Hours of
+  #    compute on a 4-core runner, high OOM risk, and the package is well over
+  #    the 100 MB push limit. Needs its own release-hosted repo.
+  #
+  #  dotnet-sdk-preview-bin / dotnet-runtime-preview-bin
+  #    Repackaged binaries, but far over 100 MB. These were only ever here for
+  #    ilspy-git, and powershell above builds against official dotnet-sdk-10.0,
+  #    so the preview SDK may not be needed at all.
+  #
+  #  ggml-sycl-f32-git / llama.cpp-sycl-f32-git
+  #    Need intel-oneapi-basekit, which is official but unpacks to 9.27 GB.
+  #    Buildable in principle -- this pipeline measured ~100 GB free after the
+  #    free-disk-space step -- but the build weight is unknown and a stall would
+  #    freeze every other package. Own lane, like orca-slicer.
+  #
+  #  python-pkg_resources
+  #    Not in the AUR or the official repos; python-setuptools provides it.

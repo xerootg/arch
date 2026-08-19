@@ -68,6 +68,45 @@ makepkg -si --noconfirm
 cd /workspace/repo
 chmod +x yay-noninteractive
 
+# Materialise any member directory that is not already present.
+#
+# Most packages here are git submodules pointing at the AUR, but adding a
+# submodule requires cloning it to record a commit, which is not always possible
+# from wherever this repo is being edited. The members list in
+# build-pacman-repo.yaml is the single source of truth for what gets built, so
+# anything listed there without a directory is cloned straight from the AUR at
+# build time. Existing submodules already have a directory and are left alone.
+echo "📥 Checking for member directories that need cloning..."
+python3 -c "
+import re
+text = open('build-pacman-repo.yaml').read()
+block = text.split('members:', 1)[1] if 'members:' in text else ''
+for line in block.splitlines():
+    if line.lstrip().startswith('#'):
+        continue
+    m = re.match(r'\s*-?\s*directory:\s*(\S+)', line)
+    if m:
+        print(m.group(1))
+" > /tmp/members.txt
+
+while read -r member; do
+  [ -n "$member" ] || continue
+  if [ -d "pkgbuilds/$member" ] && [ -f "pkgbuilds/$member/PKGBUILD" ]; then
+    continue
+  fi
+  echo "  cloning $member from the AUR"
+  rm -rf "pkgbuilds/$member"
+  if ! git clone --quiet --depth=1 "https://aur.archlinux.org/${member}.git" "pkgbuilds/$member"; then
+    echo "::error::could not clone $member from the AUR"
+    exit 4
+  fi
+  if [ ! -f "pkgbuilds/$member/PKGBUILD" ]; then
+    echo "::error::$member cloned but has no PKGBUILD"
+    exit 4
+  fi
+  chown -R "$UID:$GID" "pkgbuilds/$member"
+done < /tmp/members.txt
+
 # Prepare sources and update SRCINFO
 for dir in pkgbuilds/*/; do
   if grep -q "^pkgver()" "$dir/PKGBUILD" 2>/dev/null; then
@@ -127,6 +166,32 @@ else
     size_mb=$(du -m "$pkg" | cut -f1)
     echo "$(basename "$pkg") - ${size_mb}MB"
   done
+fi
+
+# Nothing over GitHub's hard limit may reach the Pages repo. A single 100 MB+
+# file makes `git push` fail with GH001, and the rejection takes the whole
+# commit with it -- every other package stops updating too. That has already
+# happened here once, with orca-slicer. Catch it by name now rather than as a
+# cryptic push rejection later.
+MAX_MB=95
+OVERSIZED=""
+while read -r pkg; do
+  [ -n "$pkg" ] || continue
+  size_mb=$(du -m "$pkg" | cut -f1)
+  if [ "$size_mb" -gt "$MAX_MB" ]; then
+    OVERSIZED="${OVERSIZED}  $(basename "$pkg") - ${size_mb}MB
+"
+  fi
+done < <(find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst")
+
+if [ -n "$OVERSIZED" ]; then
+  echo "::error::package(s) too large for the GitHub Pages repo (limit ${MAX_MB}MB):"
+  printf '%s' "$OVERSIZED"
+  echo "GitHub refuses any pushed file over 100 MB and the rejection takes the"
+  echo "entire commit with it, so every other package would stop updating too."
+  echo "Move these to release-pkgbuilds/ with their own workflow, the way"
+  echo "ghidra-noprompt and orca-slicer-git are handled."
+  exit 5
 fi
 
 # Sign unconditionally, whether or not anything was rebuilt.
