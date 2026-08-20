@@ -55,6 +55,18 @@ for pkg in "$@"; do
     continue
   fi
 
+  # Same key import the pipeline does, so a failure here means the same thing
+  # there. Without it this reports "unknown public key" for packages the real
+  # build handles fine.
+  su builder -c "cd '$d/src' && makepkg --printsrcinfo" > "$d/.SRCINFO" 2>/dev/null || true
+  while read -r key; do
+    [ -n "$key" ] || continue
+    for ks in hkps://keyserver.ubuntu.com hkps://keys.openpgp.org; do
+      su builder -c "timeout 60 gpg --batch --quiet --keyserver $ks --recv-keys $key" 2>/dev/null \
+        && { echo "  imported validpgpkey $key"; break; }
+    done
+  done < <(sed -n 's/^[[:space:]]*validpgpkeys = //p' "$d/.SRCINFO" 2>/dev/null | tr -d '[:space:]')
+
   log="$LOGDIR/${pkg}.log"
   # -s installs missing dependencies; most failures here are a dependency that
   # cannot be satisfied rather than the package's own source.

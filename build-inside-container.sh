@@ -192,14 +192,27 @@ if [ ${#VALIDKEYS[@]} -gt 0 ]; then
   for key in "${VALIDKEYS[@]}"; do
     [ -n "$key" ] || continue
     got=0
-    # Keyservers are individually unreliable; try more than one before giving up.
-    for ks in keyserver.ubuntu.com keys.openpgp.org pgp.mit.edu; do
-      if gpg --batch --quiet --keyserver "$ks" --recv-keys "$key" 2>/dev/null; then
+    # hkps:// explicitly. A bare hostname makes gpg use hkp on port 11371, which
+    # is blocked on GitHub runners, so every --recv-keys silently times out --
+    # which is how libkcompactdisc kept failing on "unknown public key" even
+    # after key import was added. hkps is plain 443.
+    for ks in hkps://keyserver.ubuntu.com hkps://keys.openpgp.org; do
+      if timeout 60 gpg --batch --quiet --keyserver "$ks" --recv-keys "$key" 2>/dev/null; then
         echo "  ✅ $key (from $ks)"
         got=1
         break
       fi
     done
+    # Last resort: the keyserver's plain HTTPS lookup endpoint. No hkp, no SRV
+    # records, nothing but a GET -- if this fails the key really is unreachable.
+    if [ "$got" -eq 0 ]; then
+      if curl -fsSL --max-time 60 \
+           "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x${key}" \
+           | gpg --batch --quiet --import 2>/dev/null; then
+        echo "  ✅ $key (via https lookup)"
+        got=1
+      fi
+    fi
     # Not fatal: only the packages pinning this key fail, and they carry
     # allow-failure. Killing the run would punish every other package.
     [ "$got" -eq 1 ] || echo "  ::warning::could not fetch validpgpkey $key"
