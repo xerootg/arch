@@ -18,6 +18,8 @@
 #   timeout:  minutes for this package's job alone.
 #   ccache:   keep a compiler cache between runs. Only worth it for real
 #             compilation, and it competes for the repo's 10 GB cache budget.
+#   lto:      false to build without link-time optimisation. The default is on,
+#             matching build-repo, but LTO breaks some projects at link time.
 #   srccache: keep downloaded sources between runs. For anything pulling a
 #             multi-gigabyte tarball or git tree.
 
@@ -59,7 +61,13 @@ packages:
     timeout: 330
     ccache: true
     srccache: true
-    note: needs intel-oneapi-basekit, which is official but unpacks to 9.27 GB
+    lto: false
+    note: >-
+      Needs intel-oneapi-basekit, which is official but unpacks to 9.27 GB.
+      Built without LTO: with it on, linking examples/gpt-2/gpt-2-ctx fails with
+      undefined references to gpt_params_parse and friends out of ld-temp.o --
+      symbols that live in the static common library and do not survive icpx's
+      LTO. Same class of failure that forced !lto on orca-slicer.
 
   - name: llama.cpp-sycl-f32-git
     jobs: 2

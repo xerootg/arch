@@ -7,6 +7,7 @@
 # Reads from the environment:
 #   MAKE_JOBS   cap on make/ninja parallelism (default 2)
 #   USE_CCACHE  "true" to compile through ccache
+#   USE_LTO     "false" to build without link-time optimisation (default true)
 #   SKIP_IF     a filename already published; if this build would produce it,
 #               exit 0 without building
 #   GH_REPO     owner/repo the [custom] release lives on (default xerootg/arch)
@@ -25,11 +26,23 @@ CCACHE_DIR=/work/cache/ccache
 mkdir -p "$OUT" "$SRCDEST" "$CCACHE_DIR"
 
 pacman -Syu --noconfirm --needed --disable-download-timeout \
-  archlinux-keyring base-devel git curl jq gnupg >/dev/null
+  archlinux-keyring base-devel git curl jq gnupg python >/dev/null
 
 # Same packaging rules as the main pipeline, so a package built here is
 # indistinguishable from one built there.
-sed -i 's/^OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/' /etc/makepkg.conf
+#
+# LTO is the one that is not always safe. ggml-sycl-f32-git links its examples
+# against symbols from a static common library, and under LTO with icpx those
+# come back as undefined references out of ld-temp.o -- the same class of
+# problem that forced options=('!lto') on orca-slicer. USE_LTO=false turns it
+# off for a single package rather than for everything.
+if [ "${USE_LTO:-true}" = "false" ]; then
+  lto_opt='!lto'
+  echo "LTO disabled for this package."
+else
+  lto_opt='lto'
+fi
+sed -i "s/^OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug $lto_opt)/" /etc/makepkg.conf
 sed -i 's/^COMPRESSZST=.*/COMPRESSZST=(zstd -c -T2 --ultra -20 -)/' /etc/makepkg.conf
 # Reuse downloaded sources across runs. makepkg checksums everything it reuses,
 # so a poisoned cache cannot silently change what gets built.
@@ -148,6 +161,14 @@ fi
 [ "$rc" -eq 0 ] || { echo "::error::makepkg exited $rc for $PKG"; exit "$rc"; }
 
 cp "$d/src"/*.pkg.tar.zst "$OUT/"
+
+# A package with an epoch has a colon in its filename, and GitHub rewrites that
+# to a dot on upload. Do it here instead, so the name the manifest records, the
+# name the index job re-downloads, and the name the release ends up holding are
+# all the same string. No database exists in this directory, so this only
+# renames files.
+python3 /work/.github/scripts/sanitize-epoch-filenames.py "$OUT"
+
 chmod -R a+rwX "$OUT" "$SRCDEST" "$CCACHE_DIR"
 echo "Built:"
 ls -lh "$OUT"

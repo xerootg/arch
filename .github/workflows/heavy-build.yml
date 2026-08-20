@@ -75,6 +75,9 @@ jobs:
               "timeout": p.get("timeout", 180),
               "ccache": bool(p.get("ccache", False)),
               "srccache": bool(p.get("srccache", False)),
+              # Strings, not booleans: a matrix value reaches the shell as text
+              # either way, and "false" reads better in the job name than False.
+              "lto": "false" if p.get("lto", True) is False else "true",
           } for p in pkgs]
           print("matrix=" + json.dumps({"include": out}))
           print(f"count={len(out)}")
@@ -151,6 +154,7 @@ jobs:
             -v "${{ github.workspace }}:/work" \
             -e MAKE_JOBS="${{ matrix.jobs }}" \
             -e USE_CCACHE="${{ matrix.ccache }}" \
+            -e USE_LTO="${{ matrix.lto }}" \
             -e SKIP_IF \
             -e GH_REPO \
             -e RELEASE_TAG \
@@ -236,9 +240,23 @@ jobs:
           for f in "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"; do
             gh release download "$RELEASE_TAG" --pattern "$f" --clobber || true
           done
+          # Tolerant on purpose. This job is the only thing that puts any of
+          # the matrix's work into the database, and a single missing asset
+          # used to abort it under set -e -- losing every other package built
+          # this run, not just the missing one. Add what is there and say what
+          # is not.
+          have=()
           for f in "${NEW[@]}"; do
-            gh release download "$RELEASE_TAG" --pattern "$f" --clobber
+            if gh release download "$RELEASE_TAG" --pattern "$f" --clobber; then
+              have+=( "$f" )
+            else
+              echo "::warning::$f was uploaded by its build job but is not on the release now; skipping it"
+            fi
           done
+          if [ ${#have[@]} -eq 0 ]; then
+            echo "::error::none of the ${#NEW[@]} newly built package(s) could be downloaded"
+            exit 1
+          fi
 
           docker run --rm -v "$PWD:/w" -w /w archlinux:base-devel bash -c '
             set -e
@@ -251,16 +269,34 @@ jobs:
             chmod -R a+rwX .
           '
 
+          # The packages this job downloaded were already renamed by build-one.sh,
+          # so repo-add recorded them correctly. The seeded database can still
+          # carry a colon from before that fix, though, so run the sanitizer over
+          # the result -- and run it before signing, since it rewrites the
+          # database.
+          python3 ../.github/scripts/sanitize-epoch-filenames.py . "$REPO_NAME"
+
           # Re-sign: the database changed, so its old signature no longer matches
           # and pacman rejects a bad signature harder than a missing one.
           rm -f ./*.db.sig ./*.files.sig ./*.db.tar.gz.sig ./*.files.tar.gz.sig
           bash ../.github/scripts/sign-pacman-repo.sh . "$REPO_NAME"
 
-          gh release upload "$RELEASE_TAG" \
-            "${REPO_NAME}.db" "${REPO_NAME}.files" \
-            "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz" \
-            ./*.db.sig ./*.files.sig ./*.db.tar.gz.sig ./*.files.tar.gz.sig \
-            --clobber
+          # Build the list from what exists. nullglob covers the globs but not
+          # the four literal names, and `gh release upload` fails the whole
+          # command on one missing path -- that is how a finished build has
+          # been thrown away before.
+          uploads=()
+          for f in "${REPO_NAME}.db" "${REPO_NAME}.files" \
+                   "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"; do
+            [ -f "$f" ] && uploads+=( "$f" )
+            [ -f "$f.sig" ] && uploads+=( "$f.sig" )
+          done
+          if [ ${#uploads[@]} -eq 0 ]; then
+            echo "::error::repo-add produced no database to upload"
+            exit 1
+          fi
+          printf 'uploading: %s\n' "${uploads[@]}"
+          gh release upload "$RELEASE_TAG" "${uploads[@]}" --clobber
 
           {
             echo "### heavy-build"

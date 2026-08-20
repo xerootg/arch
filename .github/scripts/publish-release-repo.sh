@@ -88,6 +88,27 @@ for f in "${WANTED[@]}" "${EXTRA[@]}"; do
   keep+="${f}"$'\n'"${f}.sig"$'\n'
 done
 
+# Verify before pruning. GitHub rewrites some characters in asset names on
+# upload -- ':' becomes '.', which broke every package with an epoch until
+# sanitize-epoch-filenames.py started applying the substitution up front. If
+# some other character ever gets the same treatment the symptom is silent: the
+# database names a file the release does not have, pacman 404s on it, and the
+# prune below deletes the package for not matching. Catch it here instead.
+mapfile -t ON_RELEASE < <(gh release view "$TAG" --json assets --jq '.assets[].name')
+missing=()
+for f in "${WANTED[@]}"; do
+  printf '%s\n' "${ON_RELEASE[@]}" | grep -qxF "$f" || missing+=( "$f" )
+done
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "::error::the database names ${#missing[@]} file(s) the release does not have."
+  echo "::error::pacman would 404 on these, and the prune would delete them:"
+  printf '::error::  %s\n' "${missing[@]}"
+  echo "::error::if a name differs only by punctuation, GitHub rewrote it on upload"
+  echo "::error::and sanitize-epoch-filenames.py needs to learn that substitution."
+  exit 1
+fi
+echo "All ${#WANTED[@]} database entries have a matching asset."
+
 echo "Pruning superseded assets..."
 [ -n "$SEED_TIME" ] && echo "Keeping anything uploaded after $SEED_TIME."
 pruned=0

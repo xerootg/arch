@@ -456,6 +456,14 @@ if [ -n "$OVERSIZED" ]; then
   exit 5
 fi
 
+# Rename any epoch package so its name survives a GitHub Release, and point the
+# database at the renamed file. Must happen before signing -- the database is
+# rewritten here, so a signature made first would no longer match it.
+echo ""
+echo "🏷  Checking package names against what a release will accept..."
+python3 /workspace/repo/.github/scripts/sanitize-epoch-filenames.py \
+  "$REPO_DIR" "${REPO_NAME:-custom}"
+
 # Sign unconditionally, whether or not anything was rebuilt.
 #
 # build-pacman-repo cannot do this itself: it calls `repo-add --quiet --nocolor`
