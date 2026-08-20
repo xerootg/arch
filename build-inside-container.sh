@@ -107,8 +107,15 @@ if [ ${#NEED[@]} -gt 0 ]; then
   # curl needs --globoff here: the arg[] parameters contain brackets, which curl
   # otherwise treats as a glob range and mangles.
   QUERY=""
-  for m in "${NEED[@]}"; do QUERY="${QUERY}&arg[]=${m}"; done
-  if ! curl -fsSL --globoff "https://aur.archlinux.org/rpc/v5/info?${QUERY#&}" -o /tmp/aur-info.json; then
+  for m in "${NEED[@]}"; do
+    # Vendored packages are not looked up; several of them are in this repo
+    # precisely because the AUR has dropped them.
+    [ -d "vendor-pkgbuilds/$m" ] && continue
+    QUERY="${QUERY}&arg[]=${m}"
+  done
+  if [ -z "$QUERY" ]; then
+    echo '{"results":[]}' > /tmp/aur-info.json
+  elif ! curl -fsSL --globoff "https://aur.archlinux.org/rpc/v5/info?${QUERY#&}" -o /tmp/aur-info.json; then
     echo "::error::could not query the AUR RPC"
     exit 4
   fi
@@ -128,10 +135,19 @@ for r in d.get('results', []):
   done < /tmp/pkgbase.txt
 
   for member in "${NEED[@]}"; do
+    # A PKGBUILD carried in this repo wins over the AUR, and is the only option
+    # for packages the AUR no longer has at all.
+    if [ -d "vendor-pkgbuilds/$member" ]; then
+      echo "  using the vendored PKGBUILD for $member"
+      cp -r "vendor-pkgbuilds/$member" "pkgbuilds/$member"
+      chown -R "$UID:$GID" "pkgbuilds/$member"
+      continue
+    fi
     base="${BASE_OF[$member]}"
     if [ -z "$base" ]; then
-      echo "::error::$member is not in the AUR (no RPC result). Remove it from"
-      echo "         build-pacman-repo.yaml, or correct the name."
+      echo "::error::$member is not in the AUR (no RPC result). Either correct"
+      echo "         the name in build-pacman-repo.yaml, drop it, or carry a"
+      echo "         PKGBUILD for it in vendor-pkgbuilds/$member/."
       exit 4
     fi
     if [ "$base" != "$member" ]; then
@@ -155,6 +171,19 @@ for r in d.get('results', []):
     if ! git clone --quiet --depth=1 "https://aur.archlinux.org/${base}.git" "pkgbuilds/$member"; then
       echo "::error::could not clone $base from the AUR"
       exit 4
+    fi
+    # Apply a local patch if this repo carries one. Some AUR recipes are simply
+    # broken -- authentik-platform-git's build() cd's to a path that no longer
+    # exists upstream -- and the choice is either to carry a fix or to not have
+    # the package. The patch is applied to a fresh clone every run, so it never
+    # drifts silently: if upstream fixes the same thing the patch stops applying
+    # and says so.
+    if [ -f "patches/${base}.patch" ]; then
+      echo "  applying patches/${base}.patch"
+      if ! (cd "pkgbuilds/$member" && patch -p1 --forward < "/workspace/repo/patches/${base}.patch"); then
+        echo "::warning::patches/${base}.patch no longer applies to $base --" \
+             "upstream may have fixed it; check whether the patch can be dropped"
+      fi
     fi
     if [ ! -f "pkgbuilds/$member/PKGBUILD" ]; then
       echo "::error::$base cloned but has no PKGBUILD"

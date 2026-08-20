@@ -1,0 +1,66 @@
+---
+# Packages that cannot share a runner with the others.
+#
+# build-repo builds ~70 members in one container. That is fine for packages that
+# fail cleanly -- allow-failure contains those -- but not for the two failure
+# modes that kill the container itself:
+#
+#   * the OOM reaper, which returns no status for allow-failure to catch
+#   * a build that never finishes, which consumes the whole job budget
+#
+# Either one stops every other package from updating. The fix is isolation: one
+# job per package, so a death is contained to the package that caused it. They
+# publish into the same custom-repo release, so users still see one repo.
+#
+# Knobs, all optional:
+#   jobs:     cap on make/ninja parallelism. The runner has 4 cores and 16 GB;
+#             a translation unit needing 3-4 GB means 2-3 jobs, not 6.
+#   timeout:  minutes for this package's job alone.
+#   ccache:   keep a compiler cache between runs. Only worth it for real
+#             compilation, and it competes for the repo's 10 GB cache budget.
+#   srccache: keep downloaded sources between runs. For anything pulling a
+#             multi-gigabyte tarball or git tree.
+
+packages:
+  - name: python-frida-git
+    jobs: 2
+    timeout: 330
+    ccache: true
+    srccache: true
+    note: builds frida-core from source
+
+  - name: ilspy-git
+    jobs: 2
+    timeout: 180
+    srccache: true
+    note: long dotnet build; also depends on powershell
+
+  - name: rapidraw-git
+    jobs: 3
+    timeout: 180
+    srccache: true
+    note: cargo-tauri plus npm
+
+  - name: dotnet-sdk-preview-bin
+    jobs: 4
+    timeout: 90
+    srccache: true
+    note: >-
+      build-pacman-repo refuses this one -- its pkgbase emits six split packages
+      that depend on each other and the planner calls it a cycle. makepkg builds
+      it without complaint, because one build produces all six at once, so it
+      only needs to be somewhere the planner is not involved.
+
+  - name: ggml-sycl-f32-git
+    jobs: 2
+    timeout: 330
+    ccache: true
+    srccache: true
+    note: needs intel-oneapi-basekit, which is official but unpacks to 9.27 GB
+
+  - name: llama.cpp-sycl-f32-git
+    jobs: 2
+    timeout: 330
+    ccache: true
+    srccache: true
+    note: depends on ggml-sycl-f32-git above

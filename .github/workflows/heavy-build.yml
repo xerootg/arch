@@ -1,0 +1,267 @@
+---
+name: heavy-build
+
+# One job per package, for the packages that cannot share a runner.
+#
+# build-repo puts ~70 members in a single container. allow-failure contains a
+# package that fails, but not one that is OOM-killed or never finishes -- both
+# take the container down and stop every other package from updating. A matrix
+# gives each of these its own runner, so a death is contained to the package
+# that caused it.
+#
+# They publish into the same custom-repo release as everything else, so this is
+# an implementation detail rather than another repo for anyone to add.
+#
+# Rebuilds are avoided three ways, cheapest first:
+#   1. the release itself -- if that exact pkgver is published, skip entirely
+#   2. cached sources, so a rebuild does not re-download gigabytes
+#   3. ccache, for the ones that genuinely recompile
+
+on:
+  schedule:
+    - cron: "20 4 * * *"
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Only these (space separated). Empty means all in the manifest."
+        required: false
+        default: ""
+      force:
+        description: "Rebuild even if the current version is already published"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "${{ github.workflow }}"
+  cancel-in-progress: false
+
+env:
+  REPO_NAME: custom
+  RELEASE_TAG: custom-repo
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Ensure PyYAML
+        # Present on the current runner images, but this job is the gate for
+        # every build below it and is not worth leaving to chance.
+        run: python3 -c 'import yaml' 2>/dev/null || pip install --quiet pyyaml
+      - id: plan
+        env:
+          ONLY: ${{ inputs.packages }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF' >> "$GITHUB_OUTPUT"
+          import json, os, yaml
+          pkgs = yaml.safe_load(open(".github/heavy-packages.yaml"))["packages"]
+          only = (os.environ.get("ONLY") or "").split()
+          if only:
+              pkgs = [p for p in pkgs if p["name"] in only]
+              missing = set(only) - {p["name"] for p in pkgs}
+              if missing:
+                  raise SystemExit(f"::error::not in the manifest: {' '.join(sorted(missing))}")
+          out = [{
+              "name": p["name"],
+              "jobs": p.get("jobs", 2),
+              "timeout": p.get("timeout", 180),
+              "ccache": bool(p.get("ccache", False)),
+              "srccache": bool(p.get("srccache", False)),
+          } for p in pkgs]
+          print("matrix=" + json.dumps({"include": out}))
+          print(f"count={len(out)}")
+          PYEOF
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      # One package's failure must never cancel the others -- that is the whole
+      # reason these are not in build-repo.
+      fail-fast: false
+      # Two at a time. These are the memory-hungry ones and the runner pool is
+      # shared with build-repo; saturating it just makes everything slower.
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free Disk Space (Ubuntu)
+        uses: BRAINSia/free-disk-space@v2
+        with:
+          tool-cache: false
+          mandb: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          # These are the builds that were being OOM-killed. Keep the swapfile.
+          swap-storage: false
+
+      - name: What is already published?
+        id: pub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+          {
+            echo 'list<<ASSETS'
+            echo "$assets"
+            echo 'ASSETS'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore the source cache
+        if: matrix.srccache
+        uses: actions/cache@v4
+        with:
+          path: cache/src
+          # Sources change with the package, not with the run, so a single
+          # restore-key per package keeps picking up the last one.
+          key: src-${{ matrix.name }}-${{ github.run_id }}
+          restore-keys: src-${{ matrix.name }}-
+
+      - name: Restore the compiler cache
+        if: matrix.ccache
+        uses: actions/cache@v4
+        with:
+          path: cache/ccache
+          key: ccache-${{ matrix.name }}-${{ github.run_id }}
+          restore-keys: ccache-${{ matrix.name }}-
+
+      - name: Build ${{ matrix.name }}
+        id: build
+        env:
+          SKIP_IF: ${{ inputs.force && '' || steps.pub.outputs.list }}
+        run: |
+          set -euo pipefail
+          mkdir -p out cache/src cache/ccache
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -e MAKE_JOBS="${{ matrix.jobs }}" \
+            -e USE_CCACHE="${{ matrix.ccache }}" \
+            -e SKIP_IF \
+            -e GITHUB_OUTPUT=/work/.gh-output \
+            -w /work \
+            archlinux:base-devel \
+            bash .github/scripts/build-one.sh "${{ matrix.name }}"
+          [ -f .gh-output ] && cat .gh-output >> "$GITHUB_OUTPUT" || true
+
+      - name: Sign and publish
+        if: steps.build.outputs.skipped != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          built=(out/*.pkg.tar.zst)
+          if [ ${#built[@]} -eq 0 ]; then
+            echo "Nothing produced."
+            exit 0
+          fi
+          # Sign only what this job built. The directory holds no database, so
+          # sign-pacman-repo.sh has nothing else to touch.
+          bash .github/scripts/sign-pacman-repo.sh out "$REPO_NAME"
+          uploads=(out/*.pkg.tar.zst out/*.sig)
+          printf 'uploading: %s\n' "${uploads[@]}"
+          gh release upload "$RELEASE_TAG" "${uploads[@]}" --clobber
+
+      - name: Record what was published
+        if: steps.build.outputs.skipped != 'true'
+        run: |
+          shopt -s nullglob
+          mkdir -p manifest
+          for f in out/*.pkg.tar.zst; do basename "$f"; done > "manifest/${{ matrix.name }}.txt"
+          cat "manifest/${{ matrix.name }}.txt" || true
+
+      - name: Upload the manifest
+        if: steps.build.outputs.skipped != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: built-${{ matrix.name }}
+          path: manifest/
+          if-no-files-found: ignore
+
+  # Separate, and single. Every build job could repo-add its own result, but
+  # they would race on one database and the last writer would drop the others.
+  index:
+    needs: build
+    if: always() && needs.build.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Collect what the matrix published
+        uses: actions/download-artifact@v5
+        with:
+          pattern: built-*
+          path: manifests
+          merge-multiple: true
+
+      - name: Add the new packages to the database
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mapfile -t NEW < <(cat manifests/*.txt 2>/dev/null | sort -u)
+          if [ ${#NEW[@]} -eq 0 ]; then
+            echo "Nothing new was published; the database is already correct."
+            exit 0
+          fi
+          echo "New packages: ${NEW[*]}"
+
+          mkdir -p work && cd work
+          # The database, plus only the packages being added. repo-add keeps the
+          # entries of packages that are not present locally, so there is no
+          # reason to pull down the whole repo.
+          for f in "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"; do
+            gh release download "$RELEASE_TAG" --pattern "$f" --clobber || true
+          done
+          for f in "${NEW[@]}"; do
+            gh release download "$RELEASE_TAG" --pattern "$f" --clobber
+          done
+
+          docker run --rm -v "$PWD:/w" -w /w archlinux:base-devel bash -c '
+            set -e
+            pacman -Sy --noconfirm --needed pacman-contrib >/dev/null 2>&1 || true
+            repo-add --quiet --nocolor "'"${REPO_NAME}"'.db.tar.gz" *.pkg.tar.zst
+            for ext in db files; do
+              rm -f "'"${REPO_NAME}"'.$ext"
+              cp "'"${REPO_NAME}"'.$ext.tar.gz" "'"${REPO_NAME}"'.$ext"
+            done
+            chmod -R a+rwX .
+          '
+
+          # Re-sign: the database changed, so its old signature no longer matches
+          # and pacman rejects a bad signature harder than a missing one.
+          rm -f ./*.db.sig ./*.files.sig ./*.db.tar.gz.sig ./*.files.tar.gz.sig
+          bash ../.github/scripts/sign-pacman-repo.sh . "$REPO_NAME"
+
+          gh release upload "$RELEASE_TAG" \
+            "${REPO_NAME}.db" "${REPO_NAME}.files" \
+            "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz" \
+            ./*.db.sig ./*.files.sig ./*.db.tar.gz.sig ./*.files.tar.gz.sig \
+            --clobber
+
+          {
+            echo "### heavy-build"
+            echo
+            printf -- '- %s\n' "${NEW[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
