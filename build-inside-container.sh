@@ -89,23 +89,79 @@ for line in block.splitlines():
         print(m.group(1))
 " > /tmp/members.txt
 
+NEED=()
 while read -r member; do
   [ -n "$member" ] || continue
   if [ -d "pkgbuilds/$member" ] && [ -f "pkgbuilds/$member/PKGBUILD" ]; then
     continue
   fi
-  echo "  cloning $member from the AUR"
-  rm -rf "pkgbuilds/$member"
-  if ! git clone --quiet --depth=1 "https://aur.archlinux.org/${member}.git" "pkgbuilds/$member"; then
-    echo "::error::could not clone $member from the AUR"
-    exit 4
-  fi
-  if [ ! -f "pkgbuilds/$member/PKGBUILD" ]; then
-    echo "::error::$member cloned but has no PKGBUILD"
-    exit 4
-  fi
-  chown -R "$UID:$GID" "pkgbuilds/$member"
+  NEED+=("$member")
 done < /tmp/members.txt
+
+if [ ${#NEED[@]} -gt 0 ]; then
+  # AUR git repositories are named by *pkgbase*, not pkgname. Cloning by
+  # pkgname does not fail -- the AUR git server hands back an empty repository
+  # rather than a 404 -- so the mistake shows up later as a directory with no
+  # PKGBUILD. Resolve pkgbase through the RPC before cloning anything.
+  #
+  # curl needs --globoff here: the arg[] parameters contain brackets, which curl
+  # otherwise treats as a glob range and mangles.
+  QUERY=""
+  for m in "${NEED[@]}"; do QUERY="${QUERY}&arg[]=${m}"; done
+  if ! curl -fsSL --globoff "https://aur.archlinux.org/rpc/v5/info?${QUERY#&}" -o /tmp/aur-info.json; then
+    echo "::error::could not query the AUR RPC"
+    exit 4
+  fi
+
+  python3 -c "
+import json
+d = json.load(open('/tmp/aur-info.json'))
+for r in d.get('results', []):
+    print(r['Name'], r['PackageBase'])
+" > /tmp/pkgbase.txt
+
+  declare -A BASE_OF
+  declare -A FIRST_MEMBER_OF_BASE
+  while read -r name base; do
+    [ -n "$name" ] || continue
+    BASE_OF["$name"]="$base"
+  done < /tmp/pkgbase.txt
+
+  for member in "${NEED[@]}"; do
+    base="${BASE_OF[$member]}"
+    if [ -z "$base" ]; then
+      echo "::error::$member is not in the AUR (no RPC result). Remove it from"
+      echo "         build-pacman-repo.yaml, or correct the name."
+      exit 4
+    fi
+    if [ "$base" != "$member" ]; then
+      echo "  $member is a split package of pkgbase $base"
+    fi
+    # A shared pkgbase means one build already produces every one of its
+    # packages. Cloning into each member directory anyway keeps every member
+    # satisfied -- build-pacman-repo errors on a member with no directory -- at
+    # the cost of building that pkgbase more than once. Worth flagging so the
+    # members list can be trimmed to one entry per pkgbase.
+    if [ -n "${FIRST_MEMBER_OF_BASE[$base]}" ]; then
+      echo "::warning::$member shares pkgbase $base with ${FIRST_MEMBER_OF_BASE[$base]};" \
+           "one entry per pkgbase is enough, this one is redundant"
+    else
+      FIRST_MEMBER_OF_BASE["$base"]="$member"
+    fi
+
+    echo "  cloning $base -> pkgbuilds/$member"
+    rm -rf "pkgbuilds/$member"
+    if ! git clone --quiet --depth=1 "https://aur.archlinux.org/${base}.git" "pkgbuilds/$member"; then
+      echo "::error::could not clone $base from the AUR"
+      exit 4
+    fi
+    if [ ! -f "pkgbuilds/$member/PKGBUILD" ]; then
+      echo "::error::$base cloned but has no PKGBUILD"
+      exit 4
+    fi
+    chown -R "$UID:$GID" "pkgbuilds/$member"
+  done
+fi
 
 # Prepare sources and update SRCINFO
 for dir in pkgbuilds/*/; do
