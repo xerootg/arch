@@ -258,15 +258,34 @@ members:
   #  extract-xiso, ktailctl, pipxu
   #                     not in the AUR or the official repos any more.
 
+
+  # Substitutes found for packages that looked unbuildable. The dependency walk
+  # was the cheap way to find these -- each replaces something that was either
+  # a multi-hour source build or missing from the AUR entirely.
+  #
+  #  electron37-bin    replaces electron37, which is a full Chromium source
+  #                    build: hours on four cores and a real OOM risk. The -bin
+  #                    variant needs alsa-lib, gtk3 and nss, and is a download
+  #                    and a repack. It provides electron37, so anything
+  #                    depending on it is satisfied.
+  #  claude-desktop    claude-desktop-bin is not in the AUR; this is.
+  #  extract-xiso-git  extract-xiso was dropped from the AUR; the -git package
+  #                    is still there.
+  - directory: electron37-bin
+    allow-failure: true
+  - directory: claude-desktop
+    allow-failure: true
+  - directory: extract-xiso-git
+    allow-failure: true
+
   # Still NOT members. Each would break this pipeline rather than merely
   # fail on its own: a package over 100 MB makes the Pages push fail outright
   # and takes every other package's update with it, and an OOM kills the
   # container rather than returning a status `allow-failure` could contain.
   #
   #  electron37
-  #    A full Chromium source build (makedepends: gn, clang, gperf). Hours of
-  #    compute on a 4-core runner, high OOM risk, and the package is well over
-  #    the 100 MB push limit. Needs its own release-hosted repo.
+  #    Superseded: electron37-bin above provides it without the Chromium source
+  #    build. Kept out of the manifest entirely rather than built both ways.
   #
   #  ggml-sycl-f32-git / llama.cpp-sycl-f32-git
   #    Need intel-oneapi-basekit, which is official but unpacks to 9.27 GB.
