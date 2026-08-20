@@ -61,14 +61,12 @@ members:
   - directory: libkolabxml
     allow-failure: true
 
-  # authentik: cli first, then the two that depend on it, then sysd
+  # All four authentik packages -- cli, agent, browser-support and sysd -- are
+  # split packages of a single pkgbase, authentik-platform-git. One entry builds
+  # every one of them. Listing them separately makes build-pacman-repo fail with
+  # "Duplication detected", because two member directories would carry the same
+  # pkgbase.
   - directory: authentik-cli-git
-    allow-failure: true
-  - directory: authentik-agent-git
-    allow-failure: true
-  - directory: authentik-browser-support-git
-    allow-failure: true
-  - directory: authentik-sysd-git
     allow-failure: true
 
   # small C/C++ and Qt bits

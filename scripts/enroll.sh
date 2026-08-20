@@ -91,6 +91,20 @@ enroll_client() {
 # ---------------------------------------------------------------------------
 
 enroll_ci() {
+  # This mode needs no root at all -- it talks to the GitHub API, not the
+  # system. Running it under sudo is the natural thing to try after client
+  # mode demanded sudo, but root has its own empty gh config, so a session
+  # authenticated as your user is invisible here. Step back down rather than
+  # making that your problem.
+  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    ylw "ci mode does not need root; re-running as $SUDO_USER so your gh login is visible."
+    exec sudo -u "$SUDO_USER" -H -- "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")" ci
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    die "ci mode must not run as root -- gh is authenticated per user, and root
+       has no session. Re-run it as your normal user, without sudo."
+  fi
+
   bold "Installing signing secrets into $REPO"
 
   command -v gh >/dev/null \

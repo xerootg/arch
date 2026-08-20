@@ -137,17 +137,18 @@ for r in d.get('results', []):
     if [ "$base" != "$member" ]; then
       echo "  $member is a split package of pkgbase $base"
     fi
-    # A shared pkgbase means one build already produces every one of its
-    # packages. Cloning into each member directory anyway keeps every member
-    # satisfied -- build-pacman-repo errors on a member with no directory -- at
-    # the cost of building that pkgbase more than once. Worth flagging so the
-    # members list can be trimmed to one entry per pkgbase.
+    # build-pacman-repo refuses to run when two member directories carry the
+    # same pkgbase ("Duplication detected"), so this is fatal rather than a
+    # warning. One entry per pkgbase builds every split package it produces.
+    # Caught here in seconds instead of after cloning everything.
     if [ -n "${FIRST_MEMBER_OF_BASE[$base]}" ]; then
-      echo "::warning::$member shares pkgbase $base with ${FIRST_MEMBER_OF_BASE[$base]};" \
-           "one entry per pkgbase is enough, this one is redundant"
-    else
-      FIRST_MEMBER_OF_BASE["$base"]="$member"
+      echo "::error::$member and ${FIRST_MEMBER_OF_BASE[$base]} are both split packages"
+      echo "         of pkgbase $base. build-pacman-repo rejects duplicate pkgbases."
+      echo "         Keep one of them in build-pacman-repo.yaml and drop the other --"
+      echo "         the single build produces both packages."
+      exit 4
     fi
+    FIRST_MEMBER_OF_BASE["$base"]="$member"
 
     echo "  cloning $base -> pkgbuilds/$member"
     rm -rf "pkgbuilds/$member"
