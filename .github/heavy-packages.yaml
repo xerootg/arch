@@ -33,7 +33,10 @@ packages:
     jobs: 2
     timeout: 180
     srccache: true
-    note: long dotnet build; also depends on powershell
+    note: >-
+      Long dotnet build. Its dependencies -- dotnet-sdk-preview-bin and
+      powershell -- are both AUR packages this project publishes, so they come
+      from [custom] rather than being rebuilt here.
 
   - name: rapidraw-git
     jobs: 3
@@ -63,7 +66,14 @@ packages:
     timeout: 330
     ccache: true
     srccache: true
-    note: depends on ggml-sycl-f32-git above
+    note: >-
+      Depends on ggml-sycl-f32-git above, which is built by this same matrix.
+      A matrix has no way to order its own entries, and serializing the whole
+      list to get it would cost more than a day of runner time, so this one
+      resolves across runs instead: ggml publishes into [custom], and the next
+      run of this workflow installs it from there rather than rebuilding it.
+      Expect the first build after ggml is added to fail on a missing
+      dependency and the one after it to succeed.
 
   - name: sentencepiece
     jobs: 3

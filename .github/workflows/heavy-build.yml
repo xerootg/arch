@@ -152,6 +152,8 @@ jobs:
             -e MAKE_JOBS="${{ matrix.jobs }}" \
             -e USE_CCACHE="${{ matrix.ccache }}" \
             -e SKIP_IF \
+            -e GH_REPO \
+            -e RELEASE_TAG \
             -e GITHUB_OUTPUT=/work/.gh-output \
             -w /work \
             archlinux:base-devel \
