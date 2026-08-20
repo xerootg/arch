@@ -178,8 +178,9 @@ members:
     allow-failure: true
   - directory: python-rich-rst
     allow-failure: true
-  - directory: python-sentencepiece
-    allow-failure: true
+  # python-sentencepiece is a split package of pkgbase sentencepiece, listed
+  # above -- one build produces both. The runtime dedupe would drop it anyway;
+  # this keeps the file honest about what actually gets built.
   - directory: python-standardwebhooks
     allow-failure: true
   - directory: python-uncalled-for

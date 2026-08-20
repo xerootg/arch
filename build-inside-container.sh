@@ -129,6 +129,7 @@ for r in d.get('results', []):
 
   declare -A BASE_OF
   declare -A FIRST_MEMBER_OF_BASE
+  DROP=()
   while read -r name base; do
     [ -n "$name" ] || continue
     BASE_OF["$name"]="$base"
@@ -153,16 +154,21 @@ for r in d.get('results', []):
     if [ "$base" != "$member" ]; then
       echo "  $member is a split package of pkgbase $base"
     fi
-    # build-pacman-repo refuses to run when two member directories carry the
-    # same pkgbase ("Duplication detected"), so this is fatal rather than a
-    # warning. One entry per pkgbase builds every split package it produces.
-    # Caught here in seconds instead of after cloning everything.
+    # Two members sharing a pkgbase is not an error to report, it is one to
+    # fix. build-pacman-repo refuses to run in that state ("Duplication
+    # detected"), but the situation is harmless in itself: one build of that
+    # pkgbase produces every package it splits into, so the second member is
+    # simply redundant. Drop it from the effective members list and carry on.
+    #
+    # This has now been hit three times -- authentik, dotnet and sentencepiece --
+    # because a members list is written in pkgnames and the pkgbase is only
+    # knowable from the AUR. Failing the build each time made a lookup this
+    # script is already doing into a six-minute round trip.
     if [ -n "${FIRST_MEMBER_OF_BASE[$base]}" ]; then
-      echo "::error::$member and ${FIRST_MEMBER_OF_BASE[$base]} are both split packages"
-      echo "         of pkgbase $base. build-pacman-repo rejects duplicate pkgbases."
-      echo "         Keep one of them in build-pacman-repo.yaml and drop the other --"
-      echo "         the single build produces both packages."
-      exit 4
+      echo "  ↩ $member is the same pkgbase ($base) as ${FIRST_MEMBER_OF_BASE[$base]};" \
+           "dropping the duplicate -- one build produces both"
+      DROP+=("$member")
+      continue
     fi
     FIRST_MEMBER_OF_BASE["$base"]="$member"
 
@@ -191,6 +197,35 @@ for r in d.get('results', []):
     fi
     chown -R "$UID:$GID" "pkgbuilds/$member"
   done
+
+  # Rewrite the effective members list so build-pacman-repo never sees the
+  # duplicates. Only the working copy in the container is touched; the file in
+  # git keeps the full list, which is what someone reading it expects.
+  if [ ${#DROP[@]} -gt 0 ]; then
+    echo "🧹 Removing ${#DROP[@]} duplicate pkgbase member(s) from the working config"
+    printf '%s\n' "${DROP[@]}" > /tmp/drop.txt
+    python3 - <<'PYDROP'
+import re
+drop = {l.strip() for l in open('/tmp/drop.txt') if l.strip()}
+lines = open('build-pacman-repo.yaml').read().splitlines(keepends=True)
+out, skip = [], False
+for line in lines:
+    m = re.match(r'(\s*)- directory:\s*(\S+)\s*$', line)
+    if m:
+        skip = m.group(2) in drop
+        if skip:
+            continue
+    elif skip:
+        # The entry's own indented keys (allow-failure, pacman, ...) go with it.
+        # Anything at list level or shallower ends the entry.
+        if re.match(r'\s*-\s', line) or not line.startswith((' ', '\t')) or re.match(r'\s{0,2}\S', line):
+            skip = False
+        else:
+            continue
+    out.append(line)
+open('build-pacman-repo.yaml', 'w').writelines(out)
+PYDROP
+  fi
 fi
 
 # Prepare sources and update SRCINFO
