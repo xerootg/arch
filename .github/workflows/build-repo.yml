@@ -18,7 +18,12 @@ permissions:
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
-  cancel-in-progress: true
+  # Only cancel on pull requests, where the branch churns and a superseded run
+  # is genuinely worthless. On main this build runs for hours, and cancelling it
+  # throws away every package it had already compiled -- a commit touching a
+  # workflow this job does not even read was enough to destroy a run 30 minutes
+  # in. Queue behind the running build instead.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REPO_NAME: custom
