@@ -234,15 +234,18 @@ done
 # Check for outdated packages
 echo ""
 echo "🔍 Debug: Existing packages in repo directory:"
-ls -1 /workspace/github-pages/archlinux/*.pkg.tar.zst 2>/dev/null | xargs -I{} basename {} || echo "  (none)"
+ls -1 /workspace/repo-out/*.pkg.tar.zst 2>/dev/null | xargs -I{} basename {} || echo "  (none)"
 
 echo ""
 echo "🔍 Debug: Running outdated check with full details:"
 build-pacman-repo outdated --details lossy-yaml || true
 
 echo ""
-REPO_DIR="/workspace/github-pages/archlinux"
-test -d "$REPO_DIR" || { echo "cannot find the gh pages repo, exiting"; exit 1; }
+# A plain directory now, not a checkout of the Pages repo. The packages are
+# published as GitHub Release assets, which lifts the 100 MB per-file push limit
+# that forced the oversized packages into repos of their own.
+REPO_DIR="/workspace/repo-out"
+mkdir -p "$REPO_DIR"
 
 OUTDATED=$(build-pacman-repo outdated --details pkgname)
 BUILT=false
@@ -271,12 +274,11 @@ else
   done
 fi
 
-# Nothing over GitHub's hard limit may reach the Pages repo. A single 100 MB+
-# file makes `git push` fail with GH001, and the rejection takes the whole
-# commit with it -- every other package stops updating too. That has already
-# happened here once, with orca-slicer. Catch it by name now rather than as a
-# cryptic push rejection later.
-MAX_MB=95
+# Release assets top out at 2 GB each. Far more headroom than the 100 MB push
+# limit this repo used to live under, but still a hard wall: an oversized asset
+# is rejected at upload and the run would publish a database referencing a
+# package nobody can download. Name it here instead.
+MAX_MB=1900
 OVERSIZED=""
 while read -r pkg; do
   [ -n "$pkg" ] || continue
@@ -288,12 +290,8 @@ while read -r pkg; do
 done < <(find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst")
 
 if [ -n "$OVERSIZED" ]; then
-  echo "::error::package(s) too large for the GitHub Pages repo (limit ${MAX_MB}MB):"
+  echo "::error::package(s) too large for a GitHub release asset (limit ${MAX_MB}MB):"
   printf '%s' "$OVERSIZED"
-  echo "GitHub refuses any pushed file over 100 MB and the rejection takes the"
-  echo "entire commit with it, so every other package would stop updating too."
-  echo "Move these to release-pkgbuilds/ with their own workflow, the way"
-  echo "ghidra-noprompt and orca-slicer-git are handled."
   exit 5
 fi
 
@@ -307,23 +305,12 @@ fi
 echo ""
 echo "🔏 Signing the repository..."
 export SIGN_REPORT=/workspace/.sign-report
-export PUBKEY_OUT=/workspace/github-pages/xerootg.asc
+export PUBKEY_OUT="$REPO_DIR/xerootg.asc"
 bash /workspace/repo/.github/scripts/sign-pacman-repo.sh "$REPO_DIR" custom
 
-SIGNED=$(sed -n 's/^signed=//p' "$SIGN_REPORT" 2>/dev/null || true)
-REMOVED=$(sed -n 's/^removed=//p' "$SIGN_REPORT" 2>/dev/null || true)
-SIGNED=${SIGNED:-0}
-REMOVED=${REMOVED:-0}
+echo ""
+echo "📦 Final repository contents:"
+ls -lh "$REPO_DIR"/*.pkg.tar.zst 2>/dev/null || echo "  (none)"
 
-# The Pages repo is worth pushing if packages changed *or* signatures did.
-if [ "$BUILT" = true ]; then
-  PACKAGE_LIST=$(echo "$OUTDATED" | tr '\n' ',' | sed 's/,$//')
-  echo "has_outdated=true" >> /workspace/.github-output
-  echo "packages=$PACKAGE_LIST" >> /workspace/.github-output
-elif [ "$SIGNED" -gt 0 ] || [ "$REMOVED" -gt 0 ]; then
-  echo "has_outdated=true" >> /workspace/.github-output
-  echo "packages=signatures ($SIGNED signed, $REMOVED removed)" >> /workspace/.github-output
-else
-  echo "has_outdated=false" >> /workspace/.github-output
-fi
-chmod ugo+r /workspace/.github-output
+# Hand the results back to the runner user, which does the publishing.
+chmod -R a+rwX "$REPO_DIR"

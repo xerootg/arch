@@ -16,7 +16,7 @@ set -E
 
 # Bump on every change. When someone pastes output back, this line is what says
 # whether they are running the copy that has the fix in it.
-SCRIPT_VERSION="2026-08-20.4"
+SCRIPT_VERSION="2026-08-20.5"
 
 # `set -e` exits silently: a command dies, the shell stops, and nothing is
 # printed. That is how a SIGPIPE in the passphrase generator managed to look
@@ -31,7 +31,7 @@ KEY_URL="https://xerootg.github.io/xerootg.asc"
 REPO="xerootg/arch"
 
 REPOS=(
-  "custom|https://xerootg.github.io/archlinux"
+  "custom|https://github.com/xerootg/arch/releases/download/custom-repo"
   "ghidra|https://github.com/xerootg/arch/releases/download/pacman-repo"
   "orca|https://github.com/xerootg/arch/releases/download/orca-repo"
 )
@@ -92,12 +92,48 @@ enroll_client() {
     || die "pacman-key --lsign-key $fpr failed"
   grn "  key imported and locally signed"
 
-  local added=0 present=0
+  local added=0 present=0 fixed=0
   for entry in "${REPOS[@]}"; do
     local name="${entry%%|*}" server="${entry##*|}"
     if grep -qE "^\[${name}\]" /etc/pacman.conf; then
-      present=$((present + 1))
-      echo "  [$name] already in pacman.conf, leaving it alone"
+      # Present, but possibly stale. [custom] moved off GitHub Pages to a
+      # release, so an existing entry can point somewhere that no longer serves
+      # packages. Skipping it would leave the machine quietly on a dead URL.
+      local current
+      current="$(awk -v r="[$name]" '
+        $0 == r { inrepo = 1; next }
+        /^\[/   { inrepo = 0 }
+        inrepo && /^[[:space:]]*Server[[:space:]]*=/ {
+          sub(/^[^=]*=[[:space:]]*/, ""); print; exit
+        }' /etc/pacman.conf)"
+      if [ "$current" = "$server" ]; then
+        present=$((present + 1))
+        echo "  [$name] already correct"
+      else
+        # Rewrite only the Server line inside this repo's own block.
+        # SigLevel too. Fixing the URL and leaving a machine on
+        # "Optional TrustAll" would keep it downloading signed packages and
+        # verifying none of them.
+        awk -v r="[$name]" -v s="Server = $server" '
+          $0 == r { inrepo = 1; print; next }
+          /^\[/   { inrepo = 0 }
+          inrepo && /^[[:space:]]*Server[[:space:]]*=/   { print s; next }
+          inrepo && /^[[:space:]]*SigLevel[[:space:]]*=/ { print "SigLevel = Required DatabaseOptional"; next }
+          { print }' /etc/pacman.conf > /etc/pacman.conf.new
+        # Sanity-check before replacing: a truncated pacman.conf is a bad day.
+        if [ -s /etc/pacman.conf.new ] && grep -qE "^\[${name}\]" /etc/pacman.conf.new; then
+          cp /etc/pacman.conf /etc/pacman.conf.bak
+          mv /etc/pacman.conf.new /etc/pacman.conf
+          fixed=$((fixed + 1))
+          ylw "  [$name] Server updated"
+          echo "      was: ${current:-<none>}"
+          echo "      now: $server"
+          echo "      previous file saved as /etc/pacman.conf.bak"
+        else
+          rm -f /etc/pacman.conf.new
+          red "  [$name] could not rewrite the Server line; leaving it alone"
+        fi
+      fi
       continue
     fi
     # Appended at the end on purpose: pacman resolves repos in file order, and
@@ -117,7 +153,7 @@ enroll_client() {
   pacman -Sy
 
   echo
-  grn "Done. $added repo(s) added, $present already present."
+  grn "Done. $added added, $fixed corrected, $present already correct."
   echo "Browse what is available at https://xerootg.github.io/"
 }
 

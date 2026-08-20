@@ -1,6 +1,6 @@
 ---
 global-settings:
-  repository: /workspace/github-pages/archlinux/custom.db.tar.gz
+  repository: /workspace/repo-out/custom.db.tar.gz
   container: pkgbuilds
   read-build-metadata: srcinfo # or "pkgbuild" or "either"
   record-failed-builds: failed-builds.yaml
@@ -115,7 +115,17 @@ members:
   - directory: powershell
     allow-failure: true
 
-  # Deliberately NOT members. Each would break this pipeline rather than merely
+  # Unblocked by release hosting: these are large but cheap to produce
+  # (prebuilt binaries, repackaged) and were excluded only by the 100 MB push
+  # limit, which no longer applies.
+  - directory: dotnet-runtime-preview-bin
+    allow-failure: true
+  - directory: dotnet-sdk-preview-bin
+    allow-failure: true
+  - directory: llama.cpp-server-tray
+    allow-failure: true
+
+  # Still NOT members. Each would break this pipeline rather than merely
   # fail on its own: a package over 100 MB makes the Pages push fail outright
   # and takes every other package's update with it, and an OOM kills the
   # container rather than returning a status `allow-failure` could contain.
@@ -124,11 +134,6 @@ members:
   #    A full Chromium source build (makedepends: gn, clang, gperf). Hours of
   #    compute on a 4-core runner, high OOM risk, and the package is well over
   #    the 100 MB push limit. Needs its own release-hosted repo.
-  #
-  #  dotnet-sdk-preview-bin / dotnet-runtime-preview-bin
-  #    Repackaged binaries, but far over 100 MB. These were only ever here for
-  #    ilspy-git, and powershell above builds against official dotnet-sdk-10.0,
-  #    so the preview SDK may not be needed at all.
   #
   #  ggml-sycl-f32-git / llama.cpp-sycl-f32-git
   #    Need intel-oneapi-basekit, which is official but unpacks to 9.27 GB.

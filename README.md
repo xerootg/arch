@@ -18,7 +18,7 @@ sudo pacman-key --lsign-key "$(curl -fsSL https://xerootg.github.io/xerootg.asc 
 
 ```ini
 [custom]
-Server = https://xerootg.github.io/archlinux
+Server = https://github.com/xerootg/arch/releases/download/custom-repo
 SigLevel = Required DatabaseOptional
 ```
 
@@ -144,6 +144,36 @@ two of them never check out the Pages repo. One writer avoids the race.
 The site carries a `.nojekyll`, so Pages serves it statically. There is no build
 step between publishing a package and it being downloadable, which matters when
 the site is mostly a few hundred megabytes of `.pkg.tar.zst`.
+
+## Why every repo is release-hosted
+
+`[custom]` used to be served from the GitHub Pages repo. It moved to a GitHub
+Release, and that removes the constraint the whole layout was built around.
+
+GitHub refuses any pushed file over 100 MB, and the rejection takes the entire
+commit with it -- so one oversized package stopped every other package from
+updating. That is why `ghidra-noprompt` and `orca-slicer-git` had to be split
+into repos of their own, and why several packages could not be built here at all.
+A release asset may be 2 GB.
+
+It also fixes pruning. Deleting a package from a git repository only adds a
+commit; the bytes stay in history forever, which is how the Pages repo reached
+8.39 GB and needed rewriting, and why `imhex` sat there in three versions at
+once. Release assets can actually be deleted, so the database is the source of
+truth and `publish-release-repo.sh` removes any asset it no longer names.
+
+pacman needs no special support for this. The release download URL answers 302
+to `release-assets.githubusercontent.com` and libcurl follows it -- exactly what
+`[ghidra]` and `[orca]` have relied on all along.
+
+A redirect from the Pages URL would have preserved the old `Server`, but GitHub
+Pages cannot issue one: it serves static files, with no server-side redirect
+configuration, and `jekyll-redirect-from` emits an HTML meta-refresh page rather
+than an HTTP status -- pacman would save that HTML as the package. The site also
+ships `.nojekyll`. So the `Server` URL changes, and `scripts/enroll.sh` rewrites
+an existing entry in place.
+
+The Pages repo now holds only the generated index and its CSVs.
 
 ## Package signing
 

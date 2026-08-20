@@ -7,9 +7,9 @@
   "repos": [
     {
       "name": "custom",
-      "server": "https://xerootg.github.io/archlinux",
+      "server": "https://github.com/xerootg/arch/releases/download/custom-repo",
       "db": "dbs/custom.db",
-      "note": "The general repo. Built by <code>build-pacman-repo</code> from <code>pkgbuilds/</code> and served as static files from GitHub Pages. Everything small enough to be pushed lives here.",
+      "note": "The general repo. Built by <code>build-pacman-repo</code> from <code>pkgbuilds/</code> and served from a GitHub Release. It moved off GitHub Pages because a pushed file over 100 MB is refused outright, which capped what could live here and let superseded packages accumulate; release assets allow 2 GB and can be pruned.",
       "workflow": "build-repo.yml"
     },
     {

@@ -70,20 +70,12 @@ jobs:
           set -euo pipefail
           mkdir -p dbs
 
-          # [custom] is served from Pages, so its database is already checked out.
-          # The .sig comes along too: the generator reads the issuer out of it to
-          # decide whether the page may advertise SigLevel = Required.
-          if [ -f pages/archlinux/custom.db ]; then
-            cp pages/archlinux/custom.db dbs/custom.db
-            [ -f pages/archlinux/custom.db.sig ] && cp pages/archlinux/custom.db.sig dbs/
-          else
-            echo "::warning::pages/archlinux/custom.db is missing"
-          fi
-
-          # The release-hosted repos. A download failure is not fatal: the
-          # generator keeps that repo's last known contents rather than
-          # reporting every one of its packages as removed.
-          for pair in "pacman-repo:ghidra" "orca-repo:orca"; do
+          # Every repo is release-hosted now, [custom] included. A download
+          # failure is not fatal: the generator keeps that repo's last known
+          # contents rather than reporting every one of its packages as removed.
+          # The .sig comes along too -- the generator reads the issuer out of it
+          # to decide whether the page may advertise SigLevel = Required.
+          for pair in "custom-repo:custom" "pacman-repo:ghidra" "orca-repo:orca"; do
             tag="${pair%%:*}"; name="${pair##*:}"
             if gh release download "$tag" --pattern "${name}.db" --dir dbs --clobber; then
               echo "fetched ${name}.db from $tag"
@@ -96,6 +88,22 @@ jobs:
           done
 
           ls -l dbs/
+
+      - name: Refresh the published signing key
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The site serves the public key, but the build that signs no longer
+          # touches the Pages repo, so bring it across from the release. Taken
+          # from the release rather than kept in git so it always matches the
+          # key actually signing.
+          if gh release download custom-repo --pattern xerootg.asc --dir pages --clobber; then
+            echo "refreshed pages/xerootg.asc"
+          else
+            echo "::warning::no xerootg.asc published yet"
+          fi
 
       - name: Generate the index
         id: gen
@@ -118,7 +126,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A index.html .nojekyll data/
+          git add -A index.html .nojekyll data/ xerootg.asc
 
           if git diff --cached --quiet; then
             echo "Nothing staged after all."
