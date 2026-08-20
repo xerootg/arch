@@ -135,6 +135,129 @@ members:
   - directory: llama.cpp-server-tray
     allow-failure: true
 
+
+  # ---------------------------------------------------------------------
+  # Batch 2, 2026-08-20. Everything still being built locally on the
+  # laptop that the AUR can actually provide -- from `pacman -Qmq` minus
+  # the -debug byproducts, minus what is already here, minus what the
+  # dependency walk found missing from the AUR.
+  # ---------------------------------------------------------------------
+
+  # Dependency-ordered: each of these is needed by something below it.
+  - directory: python-docstring-parser
+    allow-failure: true
+  - directory: python-beartype
+    allow-failure: true
+  - directory: python-fastmcp-slim
+    allow-failure: true
+  - directory: sentencepiece
+    allow-failure: true
+  - directory: rmapi
+    allow-failure: true
+
+  # python leaves (batch 2)
+  - directory: python-anthropic
+    allow-failure: true
+  - directory: python-apkinspector
+    allow-failure: true
+  - directory: python-argparse-from-file
+    allow-failure: true
+  - directory: python-cyclopts
+    allow-failure: true
+  - directory: python-fastmcp
+    allow-failure: true
+  - directory: python-google-genai
+    allow-failure: true
+  - directory: python-jsonref
+    allow-failure: true
+  - directory: python-mutf8
+    allow-failure: true
+  - directory: python-openapi-pydantic
+    allow-failure: true
+  - directory: python-py-key-value-aio
+    allow-failure: true
+  - directory: python-rich-rst
+    allow-failure: true
+  - directory: python-sentencepiece
+    allow-failure: true
+  - directory: python-standardwebhooks
+    allow-failure: true
+  - directory: python-uncalled-for
+    allow-failure: true
+
+  # android / reverse-engineering tooling
+  - directory: android-apktool
+    allow-failure: true
+  - directory: android-bash-completion
+    allow-failure: true
+  - directory: android-sdk-build-tools
+    allow-failure: true
+  - directory: android-sdk-cmdline-tools-latest
+    allow-failure: true
+  - directory: android-sdk-platform-tools
+    allow-failure: true
+  - directory: dex2jar
+    allow-failure: true
+  - directory: gradle-bash-completion
+    allow-failure: true
+  - directory: jadx-ai-mcp-bin
+    allow-failure: true
+
+  # framework laptop
+  - directory: framework-laptop-kmod-dkms-git
+    allow-failure: true
+  - directory: fw-fanctrl
+    allow-failure: true
+  - directory: fw-fanctrl-gui-bin
+    allow-failure: true
+
+  # prebuilt binaries and appimages -- large, but only a download and a repack,
+  # which release hosting now has room for
+  - directory: claude-code
+    allow-failure: true
+  - directory: cline-cli
+    allow-failure: true
+  - directory: cromite-bin
+    allow-failure: true
+  - directory: electronwmd-appimage
+    allow-failure: true
+  - directory: platinum-md-appimage
+    allow-failure: true
+  - directory: podctl-bin
+    allow-failure: true
+  - directory: visual-studio-code-bin
+    allow-failure: true
+  - directory: ytdlp-gui-bin
+    allow-failure: true
+
+  # misc
+  - directory: fatx
+    allow-failure: true
+  - directory: minissdpd
+    allow-failure: true
+  - directory: remarkable-cups
+    allow-failure: true
+  - directory: snapd
+    allow-failure: true
+  - directory: tcpping
+    allow-failure: true
+  - directory: ttf-tahoma
+    allow-failure: true
+  - directory: yay
+    allow-failure: true
+
+  # Held back deliberately, not forgotten:
+  #
+  #  python-frida-git   builds frida-core from source -- hours and gigabytes.
+  #                     A container killed by the OOM reaper takes the whole run
+  #                     with it, which allow-failure cannot catch.
+  #  ilspy-git          a long dotnet build, and it depends on powershell, which
+  #                     is already failing here. Two unknowns at once.
+  #  rapidraw-git       cargo-tauri plus npm; unmeasured.
+  #
+  #  extract-xiso, ktailctl, pipxu
+  #                     not in the AUR or the official repos any more.
+
   # Still NOT members. Each would break this pipeline rather than merely
   # fail on its own: a package over 100 MB makes the Pages push fail outright
   # and takes every other package's update with it, and an OOM kills the

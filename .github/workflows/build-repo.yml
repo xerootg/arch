@@ -28,6 +28,11 @@ env:
 jobs:
   build-pacman-repo:
     runs-on: ubuntu-latest
+    # Bound the run. With 70 members, one package that hangs or grinds would
+    # otherwise consume the 6 hour default and block the nightly build behind
+    # it. allow-failure contains a build that fails; it cannot contain one that
+    # never finishes.
+    timeout-minutes: 300
     environment: ${{ github.ref == 'refs/heads/main' && 'prod' || '' }}
     steps:
       - name: Free Disk Space (Ubuntu)
