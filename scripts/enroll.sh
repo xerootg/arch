@@ -39,8 +39,28 @@ enroll_client() {
 
   local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
 
+  # The published key only exists once a signed build has run. Before that the
+  # site 404s, which is expected rather than broken -- fall back to a key this
+  # script generated locally so a machine can be enrolled straight away.
+  local local_key=""
+  for d in "$HOME/xerootg-signing-key" "${SUDO_USER:+/home/$SUDO_USER/xerootg-signing-key}"; do
+    [ -n "$d" ] && [ -f "$d/xerootg.asc" ] && { local_key="$d/xerootg.asc"; break; }
+  done
+
   echo "Fetching the signing key..."
-  curl -fsSL "$KEY_URL" -o "$tmp/key.asc" || die "could not fetch $KEY_URL"
+  if curl -fsSL "$KEY_URL" -o "$tmp/key.asc"; then
+    echo "  fetched from $KEY_URL"
+  elif [ -n "$local_key" ]; then
+    ylw "  $KEY_URL is not published yet; using $local_key"
+    ylw "  (the site serves it once a signed build has run)"
+    cp "$local_key" "$tmp/key.asc"
+  else
+    die "could not fetch $KEY_URL, and no local key was found.
+
+       The public key is published by the first signed build. If you have not
+       set the CI secrets yet, run:   $0 ci
+       then let Build Pacman Repo finish, and re-run this."
+  fi
 
   # Read the fingerprint out of the key itself rather than hardcoding it here,
   # so this script keeps working across a key rotation.
@@ -125,7 +145,21 @@ generate_key() {
   local old_umask; old_umask="$(umask)"
   umask 077
 
-  LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 40 > "$outdir/GPG_PASSPHRASE.txt"
+  # Read a bounded chunk first, then filter. Piping /dev/urandom *into* head
+  # makes head exit at 40 bytes and kills tr with SIGPIPE, which under
+  # `set -o pipefail` fails the whole script -- silently, because set -e exits
+  # with 141 and no message. It is a race, so it passes on one machine and dies
+  # on the next. Nothing here closes a pipe early: head takes a fixed 512 bytes,
+  # tr sees EOF, and cut reads to the end.
+  # No trailing newline. gpg --passphrase-file strips one and $(cat) strips one,
+  # so a newline happens to be harmless today -- but the passphrase written here
+  # and the secret pushed to GitHub have to be byte-identical forever, and
+  # relying on two different tools trimming the same character is not worth it.
+  printf '%s' "$(LC_ALL=C tr -dc 'A-Za-z0-9' < <(head -c 512 /dev/urandom) | cut -c1-40)" \
+    > "$outdir/GPG_PASSPHRASE.txt"
+  if [ "$(wc -c < "$outdir/GPG_PASSPHRASE.txt")" -ne 40 ]; then
+    die "could not generate a 40 character passphrase"
+  fi
 
   echo "  generating a 4096-bit primary key (this takes a moment)..."
   gpg --batch --quiet --pinentry-mode loopback \
@@ -189,7 +223,9 @@ enroll_ci() {
   # whether the key files were unpacked beside it or downloaded separately.
   local here; here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local keyfile="" passfile=""
-  for d in "$here" "$PWD" "$here/signing-key" "$PWD/signing-key"; do
+  # $HOME/xerootg-signing-key is where this script puts a key it generated, so
+  # a second run reuses it instead of minting a rival key.
+  for d in "$here" "$PWD" "$here/signing-key" "$PWD/signing-key" "$HOME/xerootg-signing-key"; do
     [ -z "$keyfile"  ] && [ -f "$d/GPG_SIGNING_KEY.txt" ] && keyfile="$d/GPG_SIGNING_KEY.txt"
     [ -z "$passfile" ] && [ -f "$d/GPG_PASSPHRASE.txt"  ] && passfile="$d/GPG_PASSPHRASE.txt"
   done
