@@ -167,6 +167,9 @@ for r in d.get('results', []):
     if [ -n "${FIRST_MEMBER_OF_BASE[$base]}" ]; then
       echo "  ↩ $member is the same pkgbase ($base) as ${FIRST_MEMBER_OF_BASE[$base]};" \
            "dropping the duplicate -- one build produces both"
+      mkdir -p /workspace/repo-out
+      echo "duplicate: dropped $member (same pkgbase $base as ${FIRST_MEMBER_OF_BASE[$base]})" \
+        >> /workspace/repo-out/.preflight-report
       DROP+=("$member")
       continue
     fi
@@ -334,6 +337,8 @@ if [ -s /tmp/cycles.txt ]; then
     echo "     pkgbase. build-pacman-repo refuses the whole run over this."
     echo "     Dropping it here; add it to .github/heavy-packages.yaml, which"
     echo "     builds with plain makepkg and has no planner to upset."
+    echo "self-cycle: dropped $member (pkgbase $base; $name needs $internal) -- move it to .github/heavy-packages.yaml" \
+      >> /workspace/repo-out/.preflight-report
   done < /tmp/cycles.txt
   python3 - <<'PYDROPCYCLE'
 import re
@@ -455,6 +460,21 @@ if [ -n "$OVERSIZED" ]; then
   printf '%s' "$OVERSIZED"
   exit 5
 fi
+
+# Replay the preflight verdict.
+#
+# The Actions log API serves only a tail, capped around 5,000 lines, and this
+# step runs for over an hour. Anything printed during setup is unreadable by the
+# time the run finishes -- which has now hidden a failure four separate times.
+# Whatever the preflight decided is worth more at the end than at the start.
+echo ""
+echo "🔎 Preflight verdict (replayed here so it survives the log tail):"
+if [ -s /workspace/repo-out/.preflight-report ]; then
+  sed 's/^/  /' /workspace/repo-out/.preflight-report
+else
+  echo "  no members were dropped: no duplicate pkgbases, no self-cycles"
+fi
+rm -f /workspace/repo-out/.preflight-report
 
 # Rename any epoch package so its name survives a GitHub Release, and point the
 # database at the renamed file. Must happen before signing -- the database is

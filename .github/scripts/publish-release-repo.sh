@@ -41,20 +41,40 @@ cd "$DIR"
 # What the database says should exist. That, plus signatures and the public key,
 # is exactly the set of assets this release should hold.
 mapfile -t WANTED < <(
-  python3 - "$REPO_NAME" <<'PYEOF'
+  python3 - "$REPO_NAME" %FILENAME% <<'PYEOF'
 import sys, tarfile
-name = sys.argv[1]
+name, key = sys.argv[1], sys.argv[2]
 with tarfile.open(f"{name}.db.tar.gz", "r:*") as tf:
     for m in tf.getmembers():
         if not m.isfile():
             continue
         data = tf.extractfile(m).read().decode("utf-8", "replace").splitlines()
         for i, line in enumerate(data):
-            if line.strip() == "%FILENAME%" and i + 1 < len(data):
+            if line.strip() == key and i + 1 < len(data):
                 print(data[i + 1].strip())
                 break
 PYEOF
 )
+
+# Every package NAME the database knows, which is a different question from
+# every filename it names. The prune below needs both.
+mapfile -t KNOWN_NAMES < <(
+  python3 - "$REPO_NAME" %NAME% <<'PYEOF'
+import sys, tarfile
+name, key = sys.argv[1], sys.argv[2]
+with tarfile.open(f"{name}.db.tar.gz", "r:*") as tf:
+    for m in tf.getmembers():
+        if not m.isfile():
+            continue
+        data = tf.extractfile(m).read().decode("utf-8", "replace").splitlines()
+        for i, line in enumerate(data):
+            if line.strip() == key and i + 1 < len(data):
+                print(data[i + 1].strip())
+                break
+PYEOF
+)
+known=$'\n'
+for n in "${KNOWN_NAMES[@]}"; do known+="${n}"$'\n'; done
 if [ ${#WANTED[@]} -eq 0 ]; then
   echo "::error::no %FILENAME% entries in ${REPO_NAME}.db.tar.gz; refusing to publish"
   exit 1
@@ -113,6 +133,7 @@ echo "Pruning superseded assets..."
 [ -n "$SEED_TIME" ] && echo "Keeping anything uploaded after $SEED_TIME."
 pruned=0
 kept_newer=0
+kept_foreign=0
 while IFS=$'\t' read -r asset updated; do
   [ -n "$asset" ] || continue
   case "$asset" in
@@ -120,6 +141,27 @@ while IFS=$'\t' read -r asset updated; do
     *) continue ;;   # never touch databases or the key
   esac
   grep -qxF "$asset" <<<"$keep" && continue
+
+  # Only prune a package this database actually knows about.
+  #
+  # "Not named by the database" is not the same as "superseded". heavy-build
+  # publishes packages this pipeline has never heard of, and adds them to the
+  # database hours later when its matrix finishes -- so for that window they
+  # look exactly like stale assets. Run #384 deleted all ten of them on that
+  # reasoning. If the database has no entry for the package name at all, it is
+  # not our stale copy to delete; only a different version of a package we do
+  # know is.
+  #
+  # A pacman filename is <name>-<pkgver>-<pkgrel>-<arch>.pkg.tar.<ext>, so
+  # dropping the last three dash-separated fields leaves the name.
+  base="${asset%.sig}"
+  base="${base%.pkg.tar.*}"
+  pkgname="${base%-*-*-*}"
+  if ! grep -qxF "$pkgname" <<<"$known"; then
+    echo "  keeping $asset (this database has no $pkgname; not ours to prune)"
+    kept_foreign=$((kept_foreign + 1))
+    continue
+  fi
 
   # Both are RFC 3339 in UTC, so a string comparison is a time comparison.
   if [ -n "$SEED_TIME" ] && [[ "$updated" > "$SEED_TIME" ]]; then
@@ -133,4 +175,5 @@ while IFS=$'\t' read -r asset updated; do
   pruned=$((pruned + 1))
 done < <(gh release view "$TAG" --json assets \
            --jq '.assets[] | "\(.name)\t\(.updatedAt)"')
-echo "Pruned $pruned superseded asset(s); kept $kept_newer newer than this run."
+echo "Pruned $pruned superseded asset(s); kept $kept_newer newer than this run"
+echo "and $kept_foreign belonging to packages this database does not track."
