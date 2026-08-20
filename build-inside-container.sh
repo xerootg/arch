@@ -247,6 +247,22 @@ echo ""
 REPO_DIR="/workspace/repo-out"
 mkdir -p "$REPO_DIR"
 
+# Bootstrap an empty database if the release has none yet.
+#
+# build-pacman-repo reads the database to work out what is outdated, and it has
+# always been there before -- the old layout checked out the Pages repo, which
+# carried a committed custom.db.tar.gz. A freshly created release has nothing,
+# so the very first run of this repo has no database to read. repo-add cannot
+# make an empty one (it needs at least one package), but an empty gzipped tar is
+# exactly what an empty database is.
+for db in "${REPO_NAME:-custom}.db" "${REPO_NAME:-custom}.files"; do
+  if [ ! -f "$REPO_DIR/${db}.tar.gz" ]; then
+    echo "No ${db}.tar.gz yet; creating an empty database to bootstrap."
+    tar -czf "$REPO_DIR/${db}.tar.gz" --files-from /dev/null
+    cp "$REPO_DIR/${db}.tar.gz" "$REPO_DIR/${db}"
+  fi
+done
+
 OUTDATED=$(build-pacman-repo outdated --details pkgname)
 BUILT=false
 if [ -z "$OUTDATED" ]; then
@@ -306,7 +322,7 @@ echo ""
 echo "🔏 Signing the repository..."
 export SIGN_REPORT=/workspace/.sign-report
 export PUBKEY_OUT="$REPO_DIR/xerootg.asc"
-bash /workspace/repo/.github/scripts/sign-pacman-repo.sh "$REPO_DIR" custom
+bash /workspace/repo/.github/scripts/sign-pacman-repo.sh "$REPO_DIR" "${REPO_NAME:-custom}"
 
 echo ""
 echo "📦 Final repository contents:"
