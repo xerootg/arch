@@ -118,12 +118,20 @@ members:
   # Unblocked by release hosting: these are large but cheap to produce
   # (prebuilt binaries, repackaged) and were excluded only by the 100 MB push
   # limit, which no longer applies.
-  # dotnet-sdk-preview-bin and dotnet-runtime-preview-bin are both split
-  # packages of pkgbase dotnet-core-preview-bin, so one entry builds both.
-  # Listing both makes build-pacman-repo refuse the run with "Duplication
-  # detected" -- the same trap the authentik packages set.
-  - directory: dotnet-sdk-preview-bin
-    allow-failure: true
+  # DISABLED: build-pacman-repo cannot plan this one.
+  #   ⮾ Dependency cycle detected at dotnet-core-preview-bin
+  # The pkgbase emits six split packages -- dotnet-host, dotnet-runtime,
+  # aspnet-runtime, dotnet-targeting-pack, aspnet-targeting-pack and dotnet-sdk
+  # -- which depend on each other. The cycle is resolved fine by makepkg, since
+  # one build produces them all at once, but the planner sees it as unorderable
+  # and refuses.
+  #
+  # This is worse than a build failure: it happens before anything is built, so
+  # allow-failure cannot contain it and the whole run dies. It needs the same
+  # isolated workflow as electron37 and the SYCL stack, publishing into this
+  # release.
+  # - directory: dotnet-sdk-preview-bin
+  #   allow-failure: true
   - directory: llama.cpp-server-tray
     allow-failure: true
 
