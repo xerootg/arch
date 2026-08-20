@@ -1,0 +1,59 @@
+---
+name: try-build
+
+# Diagnose a package that fails inside the main pipeline.
+#
+# build-repo runs for 45 minutes and, with allow-failure set, reports only that
+# a package failed -- the reason is buried in a log the API serves only the tail
+# of. This builds just the packages named, one at a time, and prints why each
+# one failed. It never publishes anything.
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Space-separated package names to try building"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  try:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Free Disk Space (Ubuntu)
+        uses: BRAINSia/free-disk-space@v2
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Try the builds
+        env:
+          # Through the environment, not interpolated into the command line.
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          set -uo pipefail
+          # shellcheck disable=SC2086
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -w /work \
+            archlinux:base-devel \
+            bash .github/scripts/try-build.sh $PACKAGES
+
+      - name: Upload the build logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: try-build-logs
+          path: try-build-logs/
+          if-no-files-found: warn
