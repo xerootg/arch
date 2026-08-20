@@ -11,6 +11,21 @@
 # so it is safe on a half-finished setup.
 
 set -euo pipefail
+# -E so the ERR trap below is inherited by functions and subshells.
+set -E
+
+# Bump on every change. When someone pastes output back, this line is what says
+# whether they are running the copy that has the fix in it.
+SCRIPT_VERSION="2026-08-20.4"
+
+# `set -e` exits silently: a command dies, the shell stops, and nothing is
+# printed. That is how a SIGPIPE in the passphrase generator managed to look
+# like "it just stops after printing the output directory". Never again --
+# report the line and the status.
+# $BASH_COMMAND names the command that actually died, which beats a line number
+# -- LINENO is unreliable inside a trap, and the command text is what tells you
+# what went wrong without opening the file.
+trap 'rc=$?; printf "\033[31menroll.sh: the command \"%s\" failed (exit %s)\033[0m\n" "$BASH_COMMAND" "$rc" >&2; exit $rc' ERR
 
 KEY_URL="https://xerootg.github.io/xerootg.asc"
 REPO="xerootg/arch"
@@ -25,14 +40,14 @@ red()  { printf '\033[31m%s\033[0m\n' "$*"; }
 grn()  { printf '\033[32m%s\033[0m\n' "$*"; }
 ylw()  { printf '\033[33m%s\033[0m\n' "$*"; }
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
-die()  { red "error: $*" >&2; exit 1; }
+die()  { trap - ERR; red "error: $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # client
 # ---------------------------------------------------------------------------
 
 enroll_client() {
-  bold "Enrolling this machine"
+  bold "Enrolling this machine  (enroll.sh $SCRIPT_VERSION)"
   [ -f /etc/pacman.conf ] || die "no /etc/pacman.conf -- this is not an Arch system"
   command -v pacman-key >/dev/null || die "pacman-key not found"
   [ "$(id -u)" -eq 0 ] || die "run this with sudo"
@@ -138,6 +153,7 @@ generate_key() {
   # throwaway home means nothing is left behind. mktemp gives a short path,
   # which matters because gpg-agent's socket lives inside GNUPGHOME and unix
   # sockets cap out around 108 bytes.
+  echo "  creating a temporary keyring..."
   local ghome; ghome="$(mktemp -d)"
   chmod 700 "$ghome"
   export GNUPGHOME="$ghome"
@@ -155,6 +171,7 @@ generate_key() {
   # so a newline happens to be harmless today -- but the passphrase written here
   # and the secret pushed to GitHub have to be byte-identical forever, and
   # relying on two different tools trimming the same character is not worth it.
+  echo "  generating a passphrase..."
   printf '%s' "$(LC_ALL=C tr -dc 'A-Za-z0-9' < <(head -c 512 /dev/urandom) | cut -c1-40)" \
     > "$outdir/GPG_PASSPHRASE.txt"
   if [ "$(wc -c < "$outdir/GPG_PASSPHRASE.txt")" -ne 40 ]; then
@@ -211,7 +228,7 @@ enroll_ci() {
        has no session. Re-run it as your normal user, without sudo."
   fi
 
-  bold "Installing signing secrets into $REPO"
+  bold "Installing signing secrets into $REPO  (enroll.sh $SCRIPT_VERSION)"
 
   command -v gh >/dev/null \
     || die "the GitHub CLI (gh) is required. Install it, or paste the values by hand at
