@@ -285,8 +285,9 @@ else
   echo "  none declared"
 fi
 
-echo "📄 Current .SRCINFO files:"
-find pkgbuilds -name ".SRCINFO" -exec cat {} \;
+# Not a cat of every .SRCINFO. Seventy-two of them is several thousand lines of
+# log for information nobody reads, and the log API only serves the tail.
+echo "📄 .SRCINFO present for $(find pkgbuilds -name .SRCINFO | wc -l) member(s)"
 
 for dir in pkgbuilds/*/; do
   if [ -f "$dir/PKGBUILD" ]; then
@@ -335,13 +336,20 @@ else
   echo "📦 Outdated packages to build:"
   echo "$OUTDATED"
   # Build if outdated
-  build-pacman-repo build || (echo "build-pacman-repo failed" && tree -lah pkgbuilds/ -I "src|pkg|.git|.cache" && exit 2)
+  if ! build-pacman-repo build; then
+    echo "::error::build-pacman-repo build failed"
+    # Deliberately not a tree of pkgbuilds/. That was useful with five members
+    # and is actively harmful with seventy-two: it is thousands of lines, the
+    # log API only serves the tail, and it pushes the actual error out of reach.
+    # The failure list is what is wanted, and it is twenty lines.
+    echo "--- failed-builds.yaml ---"
+    cat failed-builds.yaml 2>/dev/null || echo "(nothing recorded)"
+    exit 2
+  fi
   BUILT=true
   # Verify packages
   echo ""
-  echo ""
-  echo "📦 Packages in repository:"
-  ls -lah "$REPO_DIR/"*.pkg.tar.zst 2>/dev/null || echo "  (none found)"
+  echo "📦 Packages in repository: $(find "$REPO_DIR" -maxdepth 1 -name '*.pkg.tar.zst' | wc -l)"
   PKG_COUNT=$(find "$REPO_DIR" -maxdepth 1 -name "*.pkg.tar.zst" | wc -l)
   if [ "$PKG_COUNT" -eq 0 ]; then
     echo "ERROR: No packages found in repository"
