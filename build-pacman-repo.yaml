@@ -66,8 +66,14 @@ members:
   # every one of them. Listing them separately makes build-pacman-repo fail with
   # "Duplication detected", because two member directories would carry the same
   # pkgbase.
-  - directory: authentik-cli-git
-    allow-failure: true
+  # DISABLED: broken in the AUR, not here. build() does
+  #   cd "$srcdir/platform/cmd/agent_system"
+  # and that path does not exist in the upstream tree any more:
+  #   PKGBUILD: line 29: cd: .../src/platform/cmd/agent_system: No such file
+  # Nothing this repo can do without carrying a patched PKGBUILD. Re-enable when
+  # the AUR package is fixed, or fork it into pkgbuilds/ as a real submodule.
+  # - directory: authentik-cli-git
+  #   allow-failure: true
 
   # small C/C++ and Qt bits
   - directory: libpthread-stubs
@@ -77,6 +83,13 @@ members:
   - directory: accounts-qml-module
     allow-failure: true
   - directory: litehtml0.9
+    allow-failure: true
+
+  # python-librespot's real depends include python-pyogg, which is AUR-only, so
+  # pacman aborts with "target not found" before the build starts. Build it
+  # first. (The dependency walk missed this: it read the AUR metadata, which
+  # listed fewer depends than the PKGBUILD actually declares.)
+  - directory: python-pyogg
     allow-failure: true
 
   # python leaves

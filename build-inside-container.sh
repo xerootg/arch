@@ -175,6 +175,39 @@ done
 echo "🔄 Updating .SRCINFO files..."
 build-pacman-repo sync-srcinfo --update
 
+# Import the upstream release keys the PKGBUILDs pin.
+#
+# A PKGBUILD with validpgpkeys verifies its source tarball against that key, and
+# a fresh container has an empty keyring, so the build dies with
+# "FAILED (unknown public key ...)" -- which is what stopped libkcompactdisc.
+# Import them rather than reaching for --skippgpcheck: the whole point of the
+# check is that upstream's tarball is what upstream published.
+echo "🔑 Importing validpgpkeys declared by the PKGBUILDs..."
+mapfile -t VALIDKEYS < <(
+  grep -h '^[[:space:]]*validpgpkeys = ' pkgbuilds/*/.SRCINFO 2>/dev/null \
+    | sed 's/.*= //' | tr -d '[:space:]' | sort -u
+)
+if [ ${#VALIDKEYS[@]} -gt 0 ]; then
+  echo "  ${#VALIDKEYS[@]} key(s) to fetch"
+  for key in "${VALIDKEYS[@]}"; do
+    [ -n "$key" ] || continue
+    got=0
+    # Keyservers are individually unreliable; try more than one before giving up.
+    for ks in keyserver.ubuntu.com keys.openpgp.org pgp.mit.edu; do
+      if gpg --batch --quiet --keyserver "$ks" --recv-keys "$key" 2>/dev/null; then
+        echo "  ✅ $key (from $ks)"
+        got=1
+        break
+      fi
+    done
+    # Not fatal: only the packages pinning this key fail, and they carry
+    # allow-failure. Killing the run would punish every other package.
+    [ "$got" -eq 1 ] || echo "  ::warning::could not fetch validpgpkey $key"
+  done
+else
+  echo "  none declared"
+fi
+
 echo "📄 Current .SRCINFO files:"
 find pkgbuilds -name ".SRCINFO" -exec cat {} \;
 
