@@ -88,6 +88,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p repo-out
+          # Stamp the moment before reading the database. Anything uploaded to
+          # the release after this is not represented in what we are about to
+          # publish, so the prune must leave it alone -- heavy-build spends
+          # hours with packages uploaded and not yet in the database.
+          echo "SEED_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           # Only the database. build-pacman-repo works out what is outdated from
           # it, and repo-add keeps the entries of packages that are not present
           # locally, so there is no reason to pull down gigabytes of packages

@@ -24,6 +24,18 @@ DIR="${1:?usage: publish-release-repo.sh <dir> <repo-name> <tag>}"
 REPO_NAME="${2:?}"
 TAG="${3:?}"
 
+# SEED_TIME, if set, is when the database being published here was read from the
+# release. Assets uploaded after that moment cannot possibly be named by it --
+# another pipeline put them there -- so they are not superseded and must not be
+# pruned.
+#
+# heavy-build makes this concrete rather than theoretical. It uploads each
+# package as its job finishes but only rewrites the database once the whole
+# matrix is done, which can be five hours later. For that entire window the
+# release holds packages the database does not name, and pruning by the database
+# alone would delete work that just succeeded.
+SEED_TIME="${SEED_TIME:-}"
+
 cd "$DIR"
 
 # What the database says should exist. That, plus signatures and the public key,
@@ -77,17 +89,27 @@ for f in "${WANTED[@]}" "${EXTRA[@]}"; do
 done
 
 echo "Pruning superseded assets..."
+[ -n "$SEED_TIME" ] && echo "Keeping anything uploaded after $SEED_TIME."
 pruned=0
-while read -r asset; do
+kept_newer=0
+while IFS=$'\t' read -r asset updated; do
   [ -n "$asset" ] || continue
   case "$asset" in
     *.pkg.tar.zst|*.pkg.tar.zst.sig|*.pkg.tar.xz|*.pkg.tar.xz.sig) ;;
     *) continue ;;   # never touch databases or the key
   esac
-  if ! grep -qxF "$asset" <<<"$keep"; then
-    echo "  removing $asset"
-    gh release delete-asset "$TAG" "$asset" --yes
-    pruned=$((pruned + 1))
+  grep -qxF "$asset" <<<"$keep" && continue
+
+  # Both are RFC 3339 in UTC, so a string comparison is a time comparison.
+  if [ -n "$SEED_TIME" ] && [[ "$updated" > "$SEED_TIME" ]]; then
+    echo "  keeping $asset (uploaded $updated, after this database was read)"
+    kept_newer=$((kept_newer + 1))
+    continue
   fi
-done < <(gh release view "$TAG" --json assets --jq '.assets[].name')
-echo "Pruned $pruned superseded asset(s)."
+
+  echo "  removing $asset"
+  gh release delete-asset "$TAG" "$asset" --yes
+  pruned=$((pruned + 1))
+done < <(gh release view "$TAG" --json assets \
+           --jq '.assets[] | "\(.name)\t\(.updatedAt)"')
+echo "Pruned $pruned superseded asset(s); kept $kept_newer newer than this run."
