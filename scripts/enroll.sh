@@ -90,6 +90,78 @@ enroll_client() {
 # ci
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# key generation
+# ---------------------------------------------------------------------------
+
+KEY_UID='xerootg <4009802+xerootg@users.noreply.github.com>'
+
+# Generate the signing key on this machine.
+#
+# Deliberately not shipped in this script and not stored in the repository: a
+# private signing key in a public repo lets anyone sign packages as you, which
+# is worse than not signing at all. Generating it here also gives it the best
+# provenance available -- it is created on your machine and never travels.
+#
+# Two keys, not one. The primary only certifies; it is what users trust and what
+# pacman-key --lsign-key refers to. Only the signing subkey is exported to CI,
+# so a compromised runner costs a subkey you can revoke, not the identity every
+# user has already trusted.
+generate_key() {
+  local outdir="$1"
+  command -v gpg >/dev/null || die "gpg is required to generate a key"
+
+  mkdir -p "$outdir"
+  chmod 700 "$outdir"
+
+  # An isolated keyring: this key has no business in your personal one, and a
+  # throwaway home means nothing is left behind. mktemp gives a short path,
+  # which matters because gpg-agent's socket lives inside GNUPGHOME and unix
+  # sockets cap out around 108 bytes.
+  local ghome; ghome="$(mktemp -d)"
+  chmod 700 "$ghome"
+  export GNUPGHOME="$ghome"
+
+  local old_umask; old_umask="$(umask)"
+  umask 077
+
+  LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 40 > "$outdir/GPG_PASSPHRASE.txt"
+
+  echo "  generating a 4096-bit primary key (this takes a moment)..."
+  gpg --batch --quiet --pinentry-mode loopback \
+      --passphrase-file "$outdir/GPG_PASSPHRASE.txt" \
+      --quick-generate-key "$KEY_UID" rsa4096 cert never
+
+  local fpr
+  fpr="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')"
+  [ -n "$fpr" ] || die "key generation failed"
+
+  echo "  adding the signing subkey..."
+  gpg --batch --quiet --pinentry-mode loopback \
+      --passphrase-file "$outdir/GPG_PASSPHRASE.txt" \
+      --quick-add-key "$fpr" rsa4096 sign never
+
+  gpg --batch --yes --pinentry-mode loopback \
+      --passphrase-file "$outdir/GPG_PASSPHRASE.txt" \
+      --armor --export-secret-subkeys "$fpr" > "$outdir/GPG_SIGNING_KEY.txt"
+  gpg --batch --yes --pinentry-mode loopback \
+      --passphrase-file "$outdir/GPG_PASSPHRASE.txt" \
+      --armor --export-secret-keys "$fpr" > "$outdir/PRIMARY-KEY-BACKUP.asc"
+  gpg --armor --export "$fpr" > "$outdir/xerootg.asc"
+  # gpg 2.1+ writes a revocation certificate at creation; keep it.
+  [ -f "$GNUPGHOME/openpgp-revocs.d/$fpr.rev" ] \
+    && cp "$GNUPGHOME/openpgp-revocs.d/$fpr.rev" "$outdir/REVOCATION-CERTIFICATE.asc"
+
+  chmod 600 "$outdir"/*
+  umask "$old_umask"
+  gpgconf --kill all >/dev/null 2>&1 || true
+  unset GNUPGHOME
+  rm -rf "$ghome"
+
+  GENERATED_FPR="$fpr"
+  grn "  key generated: $fpr"
+}
+
 enroll_ci() {
   # This mode needs no root at all -- it talks to the GitHub API, not the
   # system. Running it under sudo is the natural thing to try after client
@@ -121,8 +193,34 @@ enroll_ci() {
     [ -z "$keyfile"  ] && [ -f "$d/GPG_SIGNING_KEY.txt" ] && keyfile="$d/GPG_SIGNING_KEY.txt"
     [ -z "$passfile" ] && [ -f "$d/GPG_PASSPHRASE.txt"  ] && passfile="$d/GPG_PASSPHRASE.txt"
   done
-  [ -n "$keyfile" ]  || die "GPG_SIGNING_KEY.txt not found next to this script or in $PWD"
-  [ -n "$passfile" ] || die "GPG_PASSPHRASE.txt not found next to this script or in $PWD"
+  if [ -z "$keyfile" ] || [ -z "$passfile" ]; then
+    local outdir="$HOME/xerootg-signing-key"
+
+    # Refuse to quietly mint a second key over a repo that is already signing.
+    # Every signature already published was made by the old key, and replacing
+    # the secret without re-signing leaves clients rejecting the repo.
+    if gh secret list --repo "$REPO" 2>/dev/null | grep -q '^GPG_SIGNING_KEY'; then
+      if [ "${ROTATE:-0}" != "1" ]; then
+        die "$REPO already has GPG_SIGNING_KEY set, and no key files were found
+       next to this script. Generating a new key now would invalidate every
+       signature already published.
+
+       If you meant to rotate the key, re-run as:  ROTATE=1 $0 ci
+       and afterwards run the sign-backfill workflow to re-sign everything.
+
+       If you have the existing key files, put them beside this script instead."
+      fi
+      ylw "ROTATE=1 set -- generating a replacement key."
+      ylw "Run the sign-backfill workflow afterwards or clients will reject the repo."
+    fi
+
+    bold "No key files found. Generating a signing key on this machine."
+    echo "  output directory: $outdir"
+    generate_key "$outdir"
+    keyfile="$outdir/GPG_SIGNING_KEY.txt"
+    passfile="$outdir/GPG_PASSPHRASE.txt"
+    NEWLY_GENERATED="$outdir"
+  fi
 
   grep -q 'BEGIN PGP PRIVATE KEY BLOCK' "$keyfile" \
     || die "$keyfile does not look like an armoured private key"
@@ -152,6 +250,24 @@ enroll_ci() {
   grn "Both secrets installed."
   gh secret list --repo "$REPO" | sed 's/^/  /'
 
+  if [ -n "${NEWLY_GENERATED:-}" ]; then
+    echo
+    bold "Keep these safe, off this machine"
+    cat <<EOF
+  $NEWLY_GENERATED/
+    PRIMARY-KEY-BACKUP.asc      full secret key. Needed to issue a new signing
+                                subkey, or to recover if GitHub loses the secret.
+    REVOCATION-CERTIFICATE.asc  publish this if the key is ever compromised.
+    GPG_PASSPHRASE.txt          also unlocks the backup above, so store it with them.
+    xerootg.asc                 public key. Not secret; CI republishes it anyway.
+
+  A password manager entry or an encrypted USB stick is fine. The two secrets
+  are already in GitHub, so nothing here is needed day to day -- but without
+  PRIMARY-KEY-BACKUP.asc you cannot ever rotate the subkey without asking every
+  user to trust a new fingerprint.
+EOF
+  fi
+
   echo
   bold "Next: build and publish the signatures"
   cat <<EOF
@@ -174,8 +290,9 @@ Usage: $0 [client|ci]
            add the three repos to /etc/pacman.conf. Needs root.
 
   ci       Install GPG_SIGNING_KEY and GPG_PASSPHRASE as Actions secrets on
-           $REPO. Needs the GitHub CLI, logged in, and the two key
-           files next to this script.
+           $REPO. Needs the GitHub CLI, logged in. Uses the key files
+           beside this script if they are there, and otherwise generates a
+           fresh signing key on this machine first. Do not run it with sudo.
 
 With no argument, client mode is chosen on a system that has /etc/pacman.conf.
 EOF
