@@ -8,6 +8,10 @@ on:
     branches: ["main"]
   schedule:
     - cron: "0 0 * * *"
+  # On demand: needed after changing the signing secrets, or to re-attempt a
+  # package that failed under allow-failure, without waiting for the cron or
+  # inventing a commit.
+  workflow_dispatch:
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
