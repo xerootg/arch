@@ -90,7 +90,7 @@ jobs:
           else
             echo "Release $RELEASE_TAG does not exist yet; starting from empty."
             gh release create "$RELEASE_TAG" --title "custom pacman repo" \
-              --notes-file .github/release-notes/custom.md
+              --notes-file repo/.github/release-notes/custom.md
           fi
           ls -l repo-out/ || true
 
