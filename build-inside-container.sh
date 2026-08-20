@@ -285,6 +285,79 @@ else
   echo "  none declared"
 fi
 
+# Find pkgbases whose own split packages depend on each other, before
+# build-pacman-repo does.
+#
+# Its planner calls that a dependency cycle and refuses to run -- not to build
+# that package, to run at all. It happened with dotnet-core-preview-bin and
+# again with sentencepiece, whose python-sentencepiece depends on sentencepiece,
+# and each time it took all seventy-two members down with it. allow-failure
+# cannot contain it because nothing gets as far as building.
+#
+# makepkg has no problem with these: one invocation produces every split package
+# at once, so the "cycle" is satisfied by construction. They belong in
+# heavy-build.yml, which uses plain makepkg. Drop them here and say so.
+echo "🔎 Checking for pkgbases whose split packages depend on each other..."
+python3 - <<'PYCYCLE' > /tmp/cycles.txt
+import glob, os
+for path in sorted(glob.glob('pkgbuilds/*/.SRCINFO')):
+    member = os.path.basename(os.path.dirname(path))
+    base, current, names, deps = None, None, set(), {}
+    for raw in open(path, encoding='utf-8', errors='replace'):
+        line = raw.strip()
+        if line.startswith('pkgbase = '):
+            base = line.split(' = ', 1)[1]
+        elif line.startswith('pkgname = '):
+            current = line.split(' = ', 1)[1]
+            names.add(current)
+            deps.setdefault(current, set())
+        elif current and (line.startswith('depends = ')
+                          or line.startswith('optdepends = ')
+                          or line.startswith('makedepends = ')):
+            dep = line.split(' = ', 1)[1].split(':')[0]
+            for sep in ('>=', '<=', '=', '>', '<'):
+                dep = dep.split(sep)[0]
+            deps[current].add(dep.strip())
+    if len(names) < 2:
+        continue
+    for name, needs in deps.items():
+        internal = (needs & names) - {name}
+        if internal:
+            print(f"{member}\t{base}\t{name}\t{','.join(sorted(internal))}")
+            break
+PYCYCLE
+
+if [ -s /tmp/cycles.txt ]; then
+  cut -f1 /tmp/cycles.txt > /tmp/drop-cycles.txt
+  while IFS=$'\t' read -r member base name internal; do
+    echo "  ⮾ $member: pkgbase $base -- $name depends on $internal from the same"
+    echo "     pkgbase. build-pacman-repo refuses the whole run over this."
+    echo "     Dropping it here; add it to .github/heavy-packages.yaml, which"
+    echo "     builds with plain makepkg and has no planner to upset."
+  done < /tmp/cycles.txt
+  python3 - <<'PYDROPCYCLE'
+import re
+drop = {l.strip() for l in open('/tmp/drop-cycles.txt') if l.strip()}
+lines = open('build-pacman-repo.yaml').read().splitlines(keepends=True)
+out, skip = [], False
+for line in lines:
+    m = re.match(r'(\s*)- directory:\s*(\S+)\s*$', line)
+    if m:
+        skip = m.group(2) in drop
+        if skip:
+            continue
+    elif skip:
+        if re.match(r'\s*-\s', line) or not line.startswith((' ', '\t')) or re.match(r'\s{0,2}\S', line):
+            skip = False
+        else:
+            continue
+    out.append(line)
+open('build-pacman-repo.yaml', 'w').writelines(out)
+PYDROPCYCLE
+else
+  echo "  none"
+fi
+
 # Not a cat of every .SRCINFO. Seventy-two of them is several thousand lines of
 # log for information nobody reads, and the log API only serves the tail.
 echo "📄 .SRCINFO present for $(find pkgbuilds -name .SRCINFO | wc -l) member(s)"

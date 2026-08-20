@@ -64,3 +64,13 @@ packages:
     ccache: true
     srccache: true
     note: depends on ggml-sycl-f32-git above
+
+  - name: sentencepiece
+    jobs: 3
+    timeout: 90
+    srccache: true
+    note: >-
+      Same refusal as dotnet-sdk-preview-bin above: python-sentencepiece depends
+      on sentencepiece from the same pkgbase, so build-pacman-repo's planner
+      calls it a cycle and aborts the whole seventy-member run. One makepkg
+      invocation produces both packages, so the cycle never arises here.

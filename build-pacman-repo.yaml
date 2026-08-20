@@ -150,8 +150,6 @@ members:
     allow-failure: true
   - directory: python-fastmcp-slim
     allow-failure: true
-  - directory: sentencepiece
-    allow-failure: true
   - directory: rmapi
     allow-failure: true
 
@@ -178,9 +176,11 @@ members:
     allow-failure: true
   - directory: python-rich-rst
     allow-failure: true
-  # python-sentencepiece is a split package of pkgbase sentencepiece, listed
-  # above -- one build produces both. The runtime dedupe would drop it anyway;
-  # this keeps the file honest about what actually gets built.
+  # python-sentencepiece is a split package of pkgbase sentencepiece, and that
+  # pkgbase is in .github/heavy-packages.yaml rather than here: its two split
+  # packages depend on each other, which build-pacman-repo's planner calls a
+  # dependency cycle and refuses the entire run over. One makepkg invocation
+  # builds both, so heavy-build.yml handles it and publishes both.
   - directory: python-standardwebhooks
     allow-failure: true
   - directory: python-uncalled-for
