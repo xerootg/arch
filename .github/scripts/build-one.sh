@@ -81,6 +81,39 @@ rm -rf "$d"
 install -d -o builder -g builder "$d"
 su builder -c "git clone -q --depth=1 https://aur.archlinux.org/${base}.git '$d/src'"
 
+# Local fixups, if this package needs any.
+#
+# patches/<name>.patch is applied with patch -p1; patches/<name>.sed is applied
+# to the PKGBUILD with sed -f. The sed form suits a -git package better: its
+# PKGBUILD changes upstream often enough that a context patch goes stale, while
+# a targeted substitution keeps applying.
+#
+# A fixup that changes nothing is reported. That is how a stale one becomes
+# visible instead of quietly doing nothing while the build fails for the
+# reason it was meant to fix.
+for fx in "/work/patches/${PKG}.patch" "/work/patches/${PKG}.sed"; do
+  [ -f "$fx" ] || continue
+  before="$(md5sum "$d/src/PKGBUILD" | cut -d" " -f1)"
+  case "$fx" in
+    *.patch)
+      if su builder -c "cd '$d/src' && patch -p1 --forward < '$fx'"; then
+        echo "applied $(basename "$fx")"
+      else
+        echo "::error::$(basename "$fx") did not apply"
+        exit 6
+      fi
+      ;;
+    *.sed)
+      su builder -c "sed -i -f '$fx' '$d/src/PKGBUILD'"
+      echo "applied $(basename "$fx")"
+      ;;
+  esac
+  after="$(md5sum "$d/src/PKGBUILD" | cut -d" " -f1)"
+  if [ "$before" = "$after" ]; then
+    echo "::warning::$(basename "$fx") changed nothing -- upstream may have fixed or moved it"
+  fi
+done
+
 # validpgpkeys over hkps -- a bare hostname uses hkp on 11371, which CI blocks.
 su builder -c "cd '$d/src' && makepkg --printsrcinfo" > "$d/.SRCINFO" 2>/dev/null || true
 while read -r key; do
