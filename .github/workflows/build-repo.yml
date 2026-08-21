@@ -127,6 +127,51 @@ jobs:
             archlinux:base-devel \
             bash /workspace/repo/build-inside-container.sh
 
+      - name: Re-index anything published while this build ran
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          # The database was read at SEED_TIME and is about to be written back.
+          # heavy-build publishes into the same release and indexes at the end
+          # of its matrix, so anything it added in between is missing from the
+          # copy we hold -- publishing as-is un-indexed ilspy-git and
+          # llama.cpp-sycl-f32-git minutes after they were built. The assets
+          # survive, since the prune keeps what the database does not name, so
+          # only the index needs repairing.
+          mkdir -p published
+          for f in "${REPO_NAME}.db.tar.gz" "${REPO_NAME}.files.tar.gz"; do
+            gh release download "$RELEASE_TAG" --pattern "$f" --dir published --clobber \
+              || echo "no published $f to compare against"
+          done
+
+          changed=0
+          for ext in db files; do
+            ours="repo-out/${REPO_NAME}.${ext}.tar.gz"
+            theirs="published/${REPO_NAME}.${ext}.tar.gz"
+            before="$(md5sum "$ours" 2>/dev/null | cut -d" " -f1 || true)"
+            python3 repo/.github/scripts/merge-db-entries.py "$ours" "$theirs"
+            after="$(md5sum "$ours" 2>/dev/null | cut -d" " -f1 || true)"
+            [ "$before" != "$after" ] && changed=1
+            # Keep the bare copy pacman downloads identical to the tarball.
+            [ -f "$ours" ] && cp "$ours" "repo-out/${REPO_NAME}.${ext}"
+          done
+
+          if [ "$changed" -eq 1 ]; then
+            # The database changed after the container signed it, so its
+            # signature no longer matches -- and pacman rejects a bad database
+            # signature far more harshly than a missing one.
+            echo "Database changed; re-signing."
+            rm -f repo-out/"${REPO_NAME}".db.sig repo-out/"${REPO_NAME}".files.sig \
+                  repo-out/"${REPO_NAME}".db.tar.gz.sig repo-out/"${REPO_NAME}".files.tar.gz.sig
+            bash repo/.github/scripts/sign-pacman-repo.sh repo-out "$REPO_NAME"
+          else
+            echo "Nothing to re-index; signatures left alone."
+          fi
+
       - name: Publish to the release
         if: github.ref == 'refs/heads/main'
         env:
