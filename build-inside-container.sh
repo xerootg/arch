@@ -413,8 +413,19 @@ if [ -z "$OUTDATED" ]; then
 else
   echo "📦 Outdated packages to build:"
   echo "$OUTDATED"
-  # Build if outdated
-  if ! build-pacman-repo build; then
+  # Build if outdated.
+  #
+  # Tee the whole thing. Failures under allow-failure are reported by
+  # build-pacman-repo as a list of names with no reasons, and the reasons are
+  # buried thousands of lines upstream where the log API's tail cannot reach
+  # them -- twelve packages failed in run #384 and only one reason was
+  # recoverable. Keeping the output lets the postmortem below replay just the
+  # part that matters.
+  set +e
+  build-pacman-repo build 2>&1 | tee /tmp/build.log
+  build_rc=${PIPESTATUS[0]}
+  set -e
+  if [ "$build_rc" -ne 0 ]; then
     echo "::error::build-pacman-repo build failed"
     # Deliberately not a tree of pkgbuilds/. That was useful with five members
     # and is actively harmful with seventy-two: it is thousands of lines, the
@@ -459,6 +470,74 @@ if [ -n "$OVERSIZED" ]; then
   echo "::error::package(s) too large for a GitHub release asset (limit ${MAX_MB}MB):"
   printf '%s' "$OVERSIZED"
   exit 5
+fi
+
+# Why did each contained failure fail?
+#
+# allow-failure keeps one bad package from stopping the other seventy, which is
+# right, but build-pacman-repo then reports only "Some builds failed:" and a
+# list of names. The actual errors are inline, thousands of lines back, and the
+# Actions log API serves only a tail -- so in practice they were unreadable.
+# Replay the tail of each failed package's own output, here at the end.
+if [ -s /tmp/build.log ]; then
+  echo ""
+  echo "🧾 Postmortem for packages that failed (contained by allow-failure):"
+  python3 - <<'PYPOSTMORTEM'
+import os
+import re
+
+LOG = "/tmp/build.log"
+CONTEXT = 18
+
+try:
+    lines = open(LOG, "r", errors="replace").read().splitlines()
+except OSError:
+    raise SystemExit(0)
+
+# build-pacman-repo lists what failed as "  ● name (path)".
+failed = []
+collecting = False
+for line in lines:
+    if "Some builds failed" in line:
+        collecting = True
+        continue
+    if collecting:
+        m = re.match(r"\s*[●*-]\s+(\S+)", line)
+        if m:
+            failed.append(m.group(1))
+        elif line.strip():
+            collecting = False
+
+if not failed:
+    print("  nothing failed")
+    raise SystemExit(0)
+
+# Where each package's own output starts. makepkg announces itself, and the
+# last announcement wins -- a package retried after a dependency landed should
+# be judged on its final attempt.
+starts = {}
+for i, line in enumerate(lines):
+    m = re.search(r"Making package: (\S+) ", line)
+    if m:
+        starts[m.group(1)] = i
+
+boundaries = sorted(starts.values())
+
+for name in failed:
+    print("")
+    print("  " + "-" * 68)
+    print("  {}".format(name))
+    print("  " + "-" * 68)
+    start = starts.get(name)
+    if start is None:
+        print("    (no 'Making package' line -- it never got as far as building;")
+        print("     usually an unresolved dependency)")
+        continue
+    nxt = next((b for b in boundaries if b > start), len(lines))
+    chunk = [l for l in lines[start:nxt] if l.strip()]
+    for l in chunk[-CONTEXT:]:
+        print("    " + l[:200])
+PYPOSTMORTEM
 fi
 
 # Replay the preflight verdict.
