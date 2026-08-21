@@ -1,4 +1,38 @@
 #!/bin/bash
-# Wrapper script for yay to run non-interactively in CI environments
-# This avoids prompts for provider selection and other interactive choices
-exec yay --noconfirm --answerdiff None --answerclean None --answeredit None --removemake "$@"
+# Wrapper so yay can act as makepkg's pacman in a CI container.
+#
+# Two things have to be true, and the second is not obvious.
+#
+# 1. No prompts. Provider selection, diffs, cleanbuild -- all answered.
+#
+# 2. Nothing but package names on stdout. makepkg runs this to find out what
+#    is missing and parses what comes back. yay, when it is root, prints
+#
+#      -> Avoid running yay as root/sudo.
+#
+#    on stdout, and makepkg swallowed it whole as a dependency list:
+#
+#      ==> Missing dependencies:
+#        -> Avoid
+#        -> running
+#        -> yay
+#        -> as
+#        -> root/sudo.
+#        -> cli11
+#      -> invalid option '>'
+#
+#    That took out claude-desktop (which only wanted qemu-system-x86 and
+#    edk2-ovmf, both in the official repos), imhex, and python-py-key-value-aio
+#    -- failures that read as missing packages but were really a parse error.
+#
+# The fix for both is to stop being root. yay is designed to run as an
+# unprivileged user and escalate through sudo for the pacman parts; run it
+# that way and the warning never happens.
+if [ "$(id -u)" -eq 0 ] && id builder > /dev/null 2>&1; then
+  exec sudo -u builder --preserve-env=GNUPGHOME,SRCDEST,PKGDEST \
+    yay --noconfirm --answerdiff None --answerclean None --answeredit None \
+        --removemake "$@"
+fi
+
+exec yay --noconfirm --answerdiff None --answerclean None --answeredit None \
+     --removemake "$@"
