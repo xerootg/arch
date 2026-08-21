@@ -111,6 +111,13 @@ for fx in "/work/patches/${PKG}.patch" "/work/patches/${PKG}.sed"; do
   after="$(md5sum "$d/src/PKGBUILD" | cut -d" " -f1)"
   if [ "$before" = "$after" ]; then
     echo "::warning::$(basename "$fx") changed nothing -- upstream may have fixed or moved it"
+    # Say what the recipe actually contains. Without this, a no-op fixup costs
+    # a whole build to learn that the line it targets is written differently
+    # than assumed -- which is exactly what happened with the ${pkgdir} vs
+    # $pkgdir spelling in llama.cpp-sycl-f32-git.
+    echo "  lines the fixup was aimed at, as they actually appear:"
+    grep -n -E '(^|[^[:alnum:]_])(rm|install|cp|mv)[[:space:]]' "$d/src/PKGBUILD" \
+      | sed 's/^/    /' || echo "    (none matched)"
   fi
 done
 

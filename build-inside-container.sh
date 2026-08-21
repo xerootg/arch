@@ -595,15 +595,23 @@ try:
 except OSError:
     raise SystemExit(0)
 
+# Only the LAST list counts, and only once per package.
+#
+# The build runs twice when a missing key is recovered, so there are two
+# "Some builds failed" lists. Reading both reported android-apktool twice and
+# listed libkcompactdisc as failed when the retry had in fact built it -- its
+# excerpt was the tail of a successful package, which read as the postmortem
+# being broken again when it was only being asked the wrong question.
 failed, collecting = [], False
 for line in lines:
     if "Some builds failed" in line:
-        collecting = True
+        failed, collecting = [], True
         continue
     if collecting:
         m = re.match(r"\s*[\u25cf*-]\s+(\S+)", line)
         if m:
-            failed.append(m.group(1))
+            if m.group(1) not in failed:
+                failed.append(m.group(1))
         elif line.strip():
             collecting = False
 

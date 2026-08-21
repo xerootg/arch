@@ -1,16 +1,25 @@
 # llama.cpp-sycl-f32-git: make package()'s cleanup removals tolerant.
 #
-# The build now links cleanly (see lto: false in heavy-packages.yaml) and dies
-# in package() instead:
+# The build links cleanly now (lto: false in heavy-packages.yaml) and dies in
+# package() instead:
 #
 #   rm: cannot remove '.../usr/include/ggml*': No such file or directory
 #   ==> ERROR: A failure occurred in package().
 #
-# The recipe removes the ggml headers so it does not conflict with the
-# separately packaged ggml, but nothing installed them, so a bare rm fails and
-# takes the whole package down. Deleting a file that is already absent is
-# exactly the outcome the line wants.
+# The recipe removes the ggml headers so it does not collide with the
+# separately packaged ggml, but nothing installed them. Deleting a file that is
+# already gone is exactly what the line wants.
 #
-# Scoped deliberately: only lines that mention $pkgdir, and only where rm has
-# no flag yet, so an existing `rm -rf` is left alone.
-/\$pkgdir/ s/^\([[:space:]]*\)rm \([^-]\)/\1rm -f \2/
+# The first version of this rule matched a literal "$pkgdir" and changed
+# nothing -- the build-one.sh no-op warning is what caught that. It now also
+# matches ${pkgdir}, and handles rm carrying flags already.
+#
+# Scoped to lines mentioning pkgdir, so an rm elsewhere in the recipe is left
+# alone. Both branches are idempotent: a line that already has -f is untouched
+# because the -f alternative is matched first and rewritten to itself.
+
+# rm with no flags:      rm "$pkgdir"/x   ->  rm -f "$pkgdir"/x
+/pkgdir/ s/^\([[:space:]]*\)rm[[:space:]]\{1,\}\([^-[:space:]]\)/\1rm -f \2/
+
+# rm with flags but no f: rm -r "$pkgdir"/x  ->  rm -fr "$pkgdir"/x
+/pkgdir/ s/^\([[:space:]]*\)rm[[:space:]]\{1,\}-\([abcdeghijklmnopqrstuvwxyz]\{1,\}\)\([[:space:]]\)/\1rm -f\2\3/
