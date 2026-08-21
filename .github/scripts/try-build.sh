@@ -21,6 +21,12 @@ pacman -Syu --noconfirm --needed --disable-download-timeout \
 
 sed -i 's/^OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/' /etc/makepkg.conf
 
+# Same repo set the real pipeline has. Without [custom] this reports "target
+# not found" for dependencies this project publishes -- a verdict that says
+# more about the probe than about the package, which is the opposite of what
+# this script is for.
+. "$(dirname "${BASH_SOURCE[0]}")/enable-custom-repo.sh"
+
 useradd -m builder 2>/dev/null || true
 echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
 
