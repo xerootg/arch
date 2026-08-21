@@ -74,6 +74,7 @@ packages:
     timeout: 330
     ccache: true
     srccache: true
+    lto: false
     note: >-
       Depends on ggml-sycl-f32-git above, which is built by this same matrix.
       A matrix has no way to order its own entries, and serializing the whole
@@ -82,6 +83,13 @@ packages:
       run of this workflow installs it from there rather than rebuilding it.
       Expect the first build after ggml is added to fail on a missing
       dependency and the one after it to succeed.
+
+      Built without LTO for the same reason as ggml above: linking
+      examples/gguf-hash/llama-gguf-hash fails with seventeen undefined
+      references to XXH64, SHA1Init, sha256_init and friends out of ld-temp.o.
+      libvendor-hash.a builds fine and "Built target vendor-hash" succeeds --
+      icpx's LTO just does not carry those symbols through to the link. Only
+      the example breaks; libllama.so itself links clean.
 
   - name: sentencepiece
     jobs: 3
