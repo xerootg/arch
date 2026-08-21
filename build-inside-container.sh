@@ -55,6 +55,28 @@ build-pacman-repo patch-makepkg --replace --unsafe-ignore-unknown-changes
 sed -i "s/COMPRESSZST=.*/COMPRESSZST=(zstd -c -T2 --ultra -20 -)/" /etc/makepkg.conf
 sed -i "s/OPTIONS=.*/OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug lto)/" /etc/makepkg.conf
 
+# Give yay somebody to drop privileges to.
+#
+# yay refuses to run makepkg as root, so when it is root it de-elevates. Its
+# deElevateCommand looks up $SUDO_USER / $DOAS_USER and, only if neither
+# resolves to a real user, falls back to `systemd-run`. This container has no
+# systemd, so that fallback produces
+#
+#   error fetching <pkg>: System has not been booted with systemd as init
+#   system (PID 1). Can't operate.
+#
+# and every AUR dependency install fails -- which is what took out
+# python-fastmcp, python-fastmcp-slim and python-beartype in run #388. Member
+# packages build fine because build-pacman-repo drives makepkg itself; only
+# yay's path was broken.
+#
+# A real user in $SUDO_USER takes the credential branch instead, and no systemd
+# is involved. HOME goes with it so yay's cache lands somewhere that user can
+# actually write.
+useradd -m -s /bin/bash builder 2>/dev/null || true
+install -d -o builder -g builder /home/builder/.cache
+export SUDO_USER=builder
+
 # Install yay as root
 cd /workspace/yay
 # Ensure .git is present for VCS stamping
@@ -249,6 +271,34 @@ build-pacman-repo sync-srcinfo --update
 # "FAILED (unknown public key ...)" -- which is what stopped libkcompactdisc.
 # Import them rather than reaching for --skippgpcheck: the whole point of the
 # check is that upstream's tarball is what upstream published.
+# One key, every route we have. Returns non-zero only if all of them fail.
+import_pgp_key() {
+  local key="$1" ks
+  [ -n "$key" ] || return 1
+
+  # hkps:// explicitly. A bare hostname makes gpg use hkp on port 11371, which
+  # is blocked on GitHub runners, so every --recv-keys silently times out --
+  # which is how libkcompactdisc kept failing on "unknown public key" even
+  # after key import was added. hkps is plain 443.
+  for ks in hkps://keyserver.ubuntu.com hkps://keys.openpgp.org; do
+    if timeout 60 gpg --batch --quiet --keyserver "$ks" --recv-keys "$key" 2>/dev/null; then
+      echo "  ✅ $key (from $ks)"
+      return 0
+    fi
+  done
+
+  # Last resort: the keyserver's plain HTTPS lookup endpoint. No hkp, no SRV
+  # records, nothing but a GET -- if this fails the key really is unreachable.
+  if curl -fsSL --max-time 60 \
+       "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x${key}" \
+       | gpg --batch --quiet --import 2>/dev/null; then
+    echo "  ✅ $key (via https lookup)"
+    return 0
+  fi
+
+  return 1
+}
+
 echo "🔑 Importing validpgpkeys declared by the PKGBUILDs..."
 mapfile -t VALIDKEYS < <(
   grep -h '^[[:space:]]*validpgpkeys = ' pkgbuilds/*/.SRCINFO 2>/dev/null \
@@ -257,32 +307,10 @@ mapfile -t VALIDKEYS < <(
 if [ ${#VALIDKEYS[@]} -gt 0 ]; then
   echo "  ${#VALIDKEYS[@]} key(s) to fetch"
   for key in "${VALIDKEYS[@]}"; do
-    [ -n "$key" ] || continue
-    got=0
-    # hkps:// explicitly. A bare hostname makes gpg use hkp on port 11371, which
-    # is blocked on GitHub runners, so every --recv-keys silently times out --
-    # which is how libkcompactdisc kept failing on "unknown public key" even
-    # after key import was added. hkps is plain 443.
-    for ks in hkps://keyserver.ubuntu.com hkps://keys.openpgp.org; do
-      if timeout 60 gpg --batch --quiet --keyserver "$ks" --recv-keys "$key" 2>/dev/null; then
-        echo "  ✅ $key (from $ks)"
-        got=1
-        break
-      fi
-    done
-    # Last resort: the keyserver's plain HTTPS lookup endpoint. No hkp, no SRV
-    # records, nothing but a GET -- if this fails the key really is unreachable.
-    if [ "$got" -eq 0 ]; then
-      if curl -fsSL --max-time 60 \
-           "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x${key}" \
-           | gpg --batch --quiet --import 2>/dev/null; then
-        echo "  ✅ $key (via https lookup)"
-        got=1
-      fi
-    fi
     # Not fatal: only the packages pinning this key fail, and they carry
     # allow-failure. Killing the run would punish every other package.
-    [ "$got" -eq 1 ] || echo "  ::warning::could not fetch validpgpkey $key"
+    import_pgp_key "$key" \
+      || echo "  ::warning::could not fetch validpgpkey $key"
   done
 else
   echo "  none declared"
@@ -435,6 +463,39 @@ else
     cat failed-builds.yaml 2>/dev/null || echo "(nothing recorded)"
     exit 2
   fi
+  # A build that died on a key we can fetch deserves a second chance.
+  #
+  # The importer above only knows keys a PKGBUILD declares in validpgpkeys.
+  # libkcompactdisc declares none and still verifies its tarball, so it failed
+  # with "unknown public key BB463350D6EF31EF" -- a key keyserver.ubuntu.com
+  # serves perfectly well. The failure message names the key, and the build
+  # output is already captured, so read the ID back out and try again.
+  mapfile -t MISSING_KEYS < <(
+    grep -oE 'unknown public key [0-9A-Fa-f]{8,40}' /tmp/build.log 2>/dev/null \
+      | awk '{print $NF}' | sort -u
+  )
+  if [ ${#MISSING_KEYS[@]} -gt 0 ]; then
+    echo ""
+    echo "🔑 ${#MISSING_KEYS[@]} build(s) failed on a key that was not declared in any"
+    echo "   validpgpkeys. Fetching by the ID the failure named, then retrying."
+    imported=0
+    for key in "${MISSING_KEYS[@]}"; do
+      if import_pgp_key "$key"; then
+        imported=$((imported + 1))
+      else
+        echo "  ✗ $key could not be fetched from any keyserver"
+      fi
+    done
+    if [ "$imported" -gt 0 ]; then
+      echo "  retrying the build with $imported newly trusted key(s)"
+      # Already-built packages are skipped, so this costs only the ones that
+      # failed. Still non-fatal: allow-failure semantics have not changed.
+      set +e
+      build-pacman-repo build 2>&1 | tee -a /tmp/build.log
+      set -e
+    fi
+  fi
+
   BUILT=true
   # Verify packages
   echo ""
@@ -489,6 +550,12 @@ import re
 LOG = "/tmp/build.log"
 CONTEXT = 18
 
+ERROR_RE = re.compile(
+    r"(?:^|\W)(?:error|ERROR|FAILED|fatal|Traceback|"
+    r"could not|Could not|cannot|Cannot|"
+    r"No such file|not found|unknown public key|"
+    r"non-zero status|conflict|Permission denied)")
+
 try:
     lines = open(LOG, "r", errors="replace").read().splitlines()
 except OSError:
@@ -535,7 +602,27 @@ for name in failed:
         continue
     nxt = next((b for b in boundaries if b > start), len(lines))
     chunk = [l for l in lines[start:nxt] if l.strip()]
-    for l in chunk[-CONTEXT:]:
+
+    # Show the error, not the tail.
+    #
+    # A package's section runs up to the next "Making package:", so its last
+    # lines are the *following* package's dependency-install chatter -- which
+    # is why the first version of this printed "installing nasm..." for six of
+    # the twelve failures and never showed why any of them failed. Anchor on
+    # the last line that looks like an error instead.
+    hit = None
+    for i in range(len(chunk) - 1, -1, -1):
+        if ERROR_RE.search(chunk[i]):
+            hit = i
+            break
+
+    if hit is None:
+        print("    (no recognisable error line; showing the end of its output)")
+        window = chunk[-CONTEXT:]
+    else:
+        window = chunk[max(0, hit - CONTEXT + 4):hit + 4]
+
+    for l in window:
         print("    " + l[:200])
 PYPOSTMORTEM
 fi
