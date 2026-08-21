@@ -278,6 +278,42 @@ for dir in pkgbuilds/*/; do
   fi
 done
 
+# Local fixups, the same mechanism heavy-build has.
+#
+# patches/<member>.sed is applied to that member's PKGBUILD, patches/<member>.patch
+# with patch -p1. Applied before .SRCINFO is regenerated so a fixup touching
+# depends or pkgver is picked up.
+#
+# A fixup that changes nothing prints the recipe lines it was aimed at. That is
+# how the llama.cpp rule was found to be matching $pkgdir when the recipe wrote
+# ${pkgdir} -- without it, a missed rule costs a build to learn nothing.
+echo "🩹 Applying local fixups..."
+fixups_applied=0
+for fx in patches/*.sed patches/*.patch; do
+  [ -e "$fx" ] || continue
+  member="$(basename "$fx")"; member="${member%.*}"
+  d="pkgbuilds/$member"
+  if [ ! -f "$d/PKGBUILD" ]; then
+    echo "  ↷ $member is not a member here; skipping $(basename "$fx")"
+    continue
+  fi
+  before="$(md5sum "$d/PKGBUILD" | cut -d' ' -f1)"
+  case "$fx" in
+    *.sed)   sed -i -f "$fx" "$d/PKGBUILD" ;;
+    *.patch) patch -p1 -d "$d" --forward < "$fx" || echo "::warning::$(basename "$fx") did not apply" ;;
+  esac
+  after="$(md5sum "$d/PKGBUILD" | cut -d' ' -f1)"
+  if [ "$before" = "$after" ]; then
+    echo "  ⚠ $(basename "$fx") changed nothing. The recipe's relevant lines are:"
+    grep -n -E '(^|[^[:alnum:]_])(gradle|rm|install|cp|mv|make)[[:space:]]' "$d/PKGBUILD" \
+      | sed 's/^/      /' || echo "      (none matched)"
+  else
+    echo "  ✅ applied $(basename "$fx") to $member"
+    fixups_applied=$((fixups_applied + 1))
+  fi
+done
+[ "$fixups_applied" -eq 0 ] && echo "  no fixups changed anything"
+
 echo "🔄 Updating .SRCINFO files..."
 build-pacman-repo sync-srcinfo --update
 
