@@ -20,6 +20,10 @@
 #             compilation, and it competes for the repo's 10 GB cache budget.
 #   lto:      false to build without link-time optimisation. The default is on,
 #             matching build-repo, but LTO breaks some projects at link time.
+#   preinstall: packages to install from [custom] before makepkg resolves
+#             anything. For a package that depends on one of ours which
+#             conflicts with a stock one, whichever lands first wins -- so
+#             install ours first rather than letting pacman pick.
 #   srccache: keep downloaded sources between runs. For anything pulling a
 #             multi-gigabyte tarball or git tree.
 
@@ -35,10 +39,18 @@ packages:
     jobs: 2
     timeout: 180
     srccache: true
+    preinstall: [dotnet-sdk-preview-bin]
     note: >-
       Long dotnet build. Its dependencies -- dotnet-sdk-preview-bin and
       powershell -- are both AUR packages this project publishes, so they come
       from [custom] rather than being rebuilt here.
+
+      dotnet-sdk-preview-bin has to go in first. makepkg resolves runtime
+      dependencies before buildtime ones, and the runtime pass pulls stock
+      dotnet-host out of extra; the buildtime pass then wants
+      dotnet-sdk-preview-bin, whose dotnet-host-preview-bin conflicts with the
+      dotnet-host already sitting there, and pacman gives up on the whole
+      transaction. Installing ours first means the conflict never arises.
 
   - name: rapidraw-git
     jobs: 3

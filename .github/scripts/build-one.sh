@@ -66,6 +66,20 @@ fi
 # building it.
 . /work/.github/scripts/enable-custom-repo.sh
 
+# Install our versions before makepkg gets a chance to resolve anything.
+#
+# makepkg does runtime dependencies first, then buildtime. For ilspy-git the
+# runtime pass pulled stock dotnet-host out of extra, and the buildtime pass
+# then wanted dotnet-sdk-preview-bin, whose dotnet-host-preview-bin conflicts
+# with it -- so pacman abandoned the transaction and reported every remaining
+# dependency as missing. Whichever lands first wins, so land ours first.
+if [ -n "${PREINSTALL:-}" ]; then
+  echo "Pre-installing from [custom]: $PREINSTALL"
+  # shellcheck disable=SC2086
+  pacman -S --needed --noconfirm --disable-download-timeout $PREINSTALL \
+    || echo "::warning::could not pre-install $PREINSTALL; makepkg will resolve it"
+fi
+
 useradd -m builder 2>/dev/null || true
 echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
 chown -R builder:builder "$SRCDEST" "$CCACHE_DIR"

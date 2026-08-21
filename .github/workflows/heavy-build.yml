@@ -78,6 +78,7 @@ jobs:
               # Strings, not booleans: a matrix value reaches the shell as text
               # either way, and "false" reads better in the job name than False.
               "lto": "false" if p.get("lto", True) is False else "true",
+              "preinstall": " ".join(p.get("preinstall", []) or []),
           } for p in pkgs]
           print("matrix=" + json.dumps({"include": out}))
           print(f"count={len(out)}")
@@ -155,6 +156,7 @@ jobs:
             -e MAKE_JOBS="${{ matrix.jobs }}" \
             -e USE_CCACHE="${{ matrix.ccache }}" \
             -e USE_LTO="${{ matrix.lto }}" \
+            -e PREINSTALL="${{ matrix.preinstall }}" \
             -e SKIP_IF \
             -e GH_REPO \
             -e RELEASE_TAG \
