@@ -227,11 +227,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           mapfile -t NEW < <(cat manifests/*.txt 2>/dev/null | sort -u)
-          if [ ${#NEW[@]} -eq 0 ]; then
-            echo "Nothing new was published; the database is already correct."
-            exit 0
-          fi
-          echo "New packages: ${NEW[*]}"
+          echo "Built this run: ${#NEW[@]} package(s)"
 
           mkdir -p work && cd work
           # The database, plus only the packages being added. repo-add keeps the
@@ -253,15 +249,60 @@ jobs:
               echo "::warning::$f was uploaded by its build job but is not on the release now; skipping it"
             fi
           done
-          if [ ${#have[@]} -eq 0 ]; then
+          if [ ${#have[@]} -eq 0 ] && [ ${#NEW[@]} -gt 0 ]; then
             echo "::error::none of the ${#NEW[@]} newly built package(s) could be downloaded"
             exit 1
           fi
 
+          # Re-add any published package the database has lost track of.
+          #
+          # This job used to stop early when nothing was built, on the reasoning
+          # that the database must then already be correct. It is not always: a
+          # build-repo run that reads the database before this workflow
+          # publishes, and writes it back afterwards, silently drops whatever
+          # landed in between. Nothing else repairs that -- on the next run
+          # every package is already published, so nothing is built, and the
+          # loss becomes permanent rather than self-healing.
+          #
+          # The release is the ground truth for what exists; the database is
+          # only an index of it. Anything published that the database does not
+          # name gets added back.
+          mapfile -t INDEXED < <(python3 ../.github/scripts/db-entries.py "$REPO_NAME")
+          indexed=$'\n'
+          for f in "${INDEXED[@]}"; do indexed+="${f}"$'\n'; done
+          seen=$'\n'
+          for f in "${NEW[@]}"; do seen+="${f}"$'\n'; done
+
+          orphans=()
+          while read -r asset; do
+            case "$asset" in *.pkg.tar.zst|*.pkg.tar.xz) ;; *) continue ;; esac
+            grep -qxF "$asset" <<<"$indexed" && continue
+            grep -qxF "$asset" <<<"$seen" && continue
+            orphans+=( "$asset" )
+          done < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+
+          for f in "${orphans[@]}"; do
+            if gh release download "$RELEASE_TAG" --pattern "$f" --clobber; then
+              echo "  recovering $f, published but absent from the database"
+              have+=( "$f" )
+            else
+              echo "::warning::could not download $f to re-index it"
+            fi
+          done
+
+          if [ ${#have[@]} -eq 0 ]; then
+            echo "Nothing built and nothing missing; the database is already correct."
+            exit 0
+          fi
+          echo "Adding ${#have[@]} package(s) to the database."
+
           docker run --rm -v "$PWD:/w" -w /w archlinux:base-devel bash -c '
             set -e
+            # Without this the unmatched *.pkg.tar.xz reaches repo-add as a
+            # literal path and set -e ends the run.
+            shopt -s nullglob
             pacman -Sy --noconfirm --needed pacman-contrib >/dev/null 2>&1 || true
-            repo-add --quiet --nocolor "'"${REPO_NAME}"'.db.tar.gz" *.pkg.tar.zst
+            repo-add --quiet --nocolor "'"${REPO_NAME}"'.db.tar.gz" *.pkg.tar.zst *.pkg.tar.xz
             for ext in db files; do
               rm -f "'"${REPO_NAME}"'.$ext"
               cp "'"${REPO_NAME}"'.$ext.tar.gz" "'"${REPO_NAME}"'.$ext"

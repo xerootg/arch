@@ -20,6 +20,10 @@
 
 set -euo pipefail
 
+# Resolved before the cd below, since the helper lives beside this script
+# and the working directory is about to become the repo directory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 DIR="${1:?usage: publish-release-repo.sh <dir> <repo-name> <tag>}"
 REPO_NAME="${2:?}"
 TAG="${3:?}"
@@ -40,39 +44,11 @@ cd "$DIR"
 
 # What the database says should exist. That, plus signatures and the public key,
 # is exactly the set of assets this release should hold.
-mapfile -t WANTED < <(
-  python3 - "$REPO_NAME" %FILENAME% <<'PYEOF'
-import sys, tarfile
-name, key = sys.argv[1], sys.argv[2]
-with tarfile.open(f"{name}.db.tar.gz", "r:*") as tf:
-    for m in tf.getmembers():
-        if not m.isfile():
-            continue
-        data = tf.extractfile(m).read().decode("utf-8", "replace").splitlines()
-        for i, line in enumerate(data):
-            if line.strip() == key and i + 1 < len(data):
-                print(data[i + 1].strip())
-                break
-PYEOF
-)
+mapfile -t WANTED < <(python3 "$SCRIPT_DIR/db-entries.py" "$REPO_NAME" '%FILENAME%')
 
 # Every package NAME the database knows, which is a different question from
 # every filename it names. The prune below needs both.
-mapfile -t KNOWN_NAMES < <(
-  python3 - "$REPO_NAME" %NAME% <<'PYEOF'
-import sys, tarfile
-name, key = sys.argv[1], sys.argv[2]
-with tarfile.open(f"{name}.db.tar.gz", "r:*") as tf:
-    for m in tf.getmembers():
-        if not m.isfile():
-            continue
-        data = tf.extractfile(m).read().decode("utf-8", "replace").splitlines()
-        for i, line in enumerate(data):
-            if line.strip() == key and i + 1 < len(data):
-                print(data[i + 1].strip())
-                break
-PYEOF
-)
+mapfile -t KNOWN_NAMES < <(python3 "$SCRIPT_DIR/db-entries.py" "$REPO_NAME" '%NAME%')
 known=$'\n'
 for n in "${KNOWN_NAMES[@]}"; do known+="${n}"$'\n'; done
 if [ ${#WANTED[@]} -eq 0 ]; then
