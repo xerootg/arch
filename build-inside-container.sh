@@ -605,7 +605,7 @@ if [ -s /tmp/build.log ]; then
 import re
 
 LOG = "/tmp/build.log"
-BEFORE, AFTER = 14, 4
+BEFORE, AFTER = 14, 10
 
 # build-pacman-repo prints "==== PACKAGE ====" then "pkgbase: <name>" before
 # each one it handles. That is an exact boundary. The first version of this
@@ -623,7 +623,10 @@ PKGBASE = re.compile(r"pkgbase:\s*(\S+)")
 STRONG = re.compile(
     r"==> ERROR|^error:|\berror making\b|FAILED \(|Traceback|"
     r"non-zero status code|undefined reference|Could not resolve|"
-    r"failed to install|No space left|Killed|command not found")
+    r"failed to install|No space left|Killed|command not found|"
+    # A stacktrace's "Caused by:" is the line that actually names the cause,
+    # and it sits below the message rather than above it -- hence AFTER.
+    r"Caused by:|What went wrong")
 WEAK = re.compile(r"\berror\b|\bfatal\b|cannot |could not |not found|Permission denied")
 
 try:

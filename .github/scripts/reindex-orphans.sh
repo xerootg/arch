@@ -34,10 +34,30 @@ mapfile -t INDEXED < <(python3 "$SCRIPT_DIR/db-entries.py" "$REPO_NAME")
 indexed=$'\n'
 for f in "${INDEXED[@]}"; do indexed+="${f}"$'\n'; done
 
+# The database's package NAMES, which is a different question from its
+# filenames and the one that actually defines an orphan.
+mapfile -t KNOWN_NAMES < <(python3 "$SCRIPT_DIR/db-entries.py" "$REPO_NAME" '%NAME%')
+known=$'\n'
+for n in "${KNOWN_NAMES[@]}"; do known+="${n}"$'\n'; done
+
 orphans=()
 while read -r asset; do
   case "$asset" in *.pkg.tar.zst|*.pkg.tar.xz) ;; *) continue ;; esac
   grep -qxF "$asset" <<<"$indexed" && continue
+
+  # An asset whose package name the database already knows is not an orphan.
+  # It is either the current version -- in which case the database names it and
+  # we never got here -- or a superseded one, which is the prune's business,
+  # not ours. Treating those as orphans downloaded three packages, had repo-add
+  # refuse each with "a newer version is already present", and still forced a
+  # re-sign of an unchanged database.
+  #
+  # A name the database has never heard of is the real case: a package another
+  # pipeline published and this database has lost track of.
+  base="${asset%.pkg.tar.*}"
+  pkgname="${base%-*-*-*}"
+  grep -qxF "$pkgname" <<<"$known" && continue
+
   orphans+=( "$asset" )
 done < <(gh release view "$TAG" --json assets --jq '.assets[].name')
 

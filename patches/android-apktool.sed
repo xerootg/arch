@@ -24,3 +24,19 @@ s/\([&|;][[:space:]]*\)gradle[[:space:]]/\1.\/gradlew /
 
 # `$_gradle` style indirection is left alone deliberately: substituting into a
 # variable assignment would change the meaning of every later use.
+
+# Ask for the stacktrace.
+#
+# Switching to the wrapper got past "Cannot find module
+# 'gradle-public-api-legacy'" -- the log now shows gradle 8.14.4 out of
+# .gradle/wrapper/dists -- and the build fails later with an exception whose
+# entire message is a bare version string:
+#
+#   * What went wrong:
+#   26.0.2.1
+#
+# which says nothing about where it came from. Gradle's own advice is to rerun
+# with --stacktrace, and the recipe is not readable from here, so ask it for the
+# stacktrace rather than guessing at what wants that version.
+/gradlew/ s/$/ --stacktrace/
+/gradlew.*--stacktrace.*--stacktrace/ s/ --stacktrace\( --stacktrace\)*/ --stacktrace/
