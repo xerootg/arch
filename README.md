@@ -175,6 +175,118 @@ an existing entry in place.
 
 The Pages repo now holds only the generated index and its CSVs.
 
+## Two things about the build container
+
+**yay has to be able to stop being root.** It will not run makepkg as root, so
+when it is root it looks up `$SUDO_USER` / `$DOAS_USER` and drops to that user
+— and only if neither resolves to a real user does it fall back to
+`systemd-run`, which cannot work in a container. With neither set, every AUR
+dependency install failed with *"System has not been booted with systemd as
+init system"*, and because `build-pacman-repo` drives makepkg itself for
+members, this only broke yay's path — so it looked like several unrelated
+packages failing for their own reasons. The container creates a `builder` user
+and `yay-noninteractive` runs yay as it, which is how yay is meant to be used.
+
+That wrapper also has to keep its stdout clean. makepkg parses it to find out
+what is missing, and yay's *"Avoid running yay as root/sudo."* warning went
+onto stdout, where makepkg read it as a dependency list and reported
+`-> Avoid`, `-> running`, `-> yay` as missing packages.
+
+**check() is off.** `python-beartype` builds and then fails its own
+`test_poetry` case, which aborts packaging and takes everything depending on it
+down too. An upstream test that does not survive a container is not a reason to
+refuse to ship the package, and `heavy-build` already passed `--nocheck`.
+
+## Packages that need their own runner
+
+`build-pacman-repo` builds every member of `build-pacman-repo.yaml` in one
+container. `allow-failure` keeps a package that fails from stopping the other
+seventy — but it cannot contain the two failure modes that kill the container
+itself: the OOM reaper, which returns no status to catch, and a build that
+never finishes, which eats the whole job budget. Either one stops every other
+package from updating.
+
+`.github/workflows/heavy-build.yml` gives those packages a job each, two at a
+time, so a death is contained to the package that caused it. They publish into
+the same `custom-repo` release, so this is an implementation detail rather than
+another repo to add. `.github/heavy-packages.yaml` is the manifest:
+
+| knob | what it does |
+|---|---|
+| `jobs` | cap on make/ninja parallelism — 16 GB and a translation unit needing 4 GB means 2–3, not 6 |
+| `timeout` | minutes for that package alone |
+| `ccache` / `srccache` | keep a compiler or source cache between runs |
+| `lto` | `false` to build without link-time optimisation |
+| `preinstall` | packages to install from `[custom]` before makepkg resolves anything |
+
+Two of those exist because of specific failures. `ggml-sycl-f32-git` and
+`llama.cpp-sycl-f32-git` link fine until LTO is on, at which point icpx stops
+carrying symbols out of a static archive through to the link and both die on
+undefined references from `ld-temp.o` — the same thing that forced
+`options=('!lto')` on orca-slicer. And `ilspy-git` needs `preinstall` because
+makepkg resolves runtime dependencies before buildtime ones: the runtime pass
+pulls stock `dotnet-host` out of `extra`, the buildtime pass then wants
+`dotnet-sdk-preview-bin`, whose `dotnet-host-preview-bin` conflicts with what
+is already installed, and pacman abandons the transaction. Whichever lands
+first wins, so ours lands first.
+
+`build-one.sh` also adds `[custom]` to the container, which is what makes an
+incremental build across two pipelines work at all — a dependency built by
+either one is installed from the release instead of rebuilt.
+
+One thing a matrix cannot do is order itself. `llama.cpp-sycl-f32-git` depends
+on `ggml-sycl-f32-git` from the same manifest, and serialising the list to get
+that ordering would cost more runner time than the dependency is worth, so it
+resolves on the following run.
+
+### Local fixups
+
+`patches/<name>.sed` is applied to that package's PKGBUILD and
+`patches/<name>.patch` with `patch -p1`, by both pipelines. The sed form suits
+a `-git` package better: its PKGBUILD churns often enough that a context patch
+goes stale, while a targeted substitution keeps applying.
+
+A fixup that changes nothing is reported, and prints the recipe lines it was
+aimed at. That matters more than it sounds — the `llama.cpp` rule was matching
+`$pkgdir` against a recipe that writes `${pkgdir}`, and without the report a
+missed rule costs a two-hour build to learn nothing.
+
+## How the database and the release stay in agreement
+
+Two pipelines write to one release. Each seeds its copy of the database, builds
+for up to two hours, and writes it back — so each is always working from a
+stale copy, and every guard here exists because that produced a real failure.
+
+**The prune only deletes packages the database tracks.** It removes an asset
+the database does not name, which is right when there is one writer and wrong
+with two: heavy-build's packages are unknown to build-repo's database for the
+whole time its matrix is running. A run deleted all ten of them once. Now an
+asset whose package name the database has never heard of is someone else's
+current work, not our superseded copy.
+
+**`SEED_TIME` keeps anything uploaded after the database was read.** Same idea,
+narrower: a package we *do* track that another run has just republished.
+
+**Re-indexing rebuilds the database from the assets.** The release is what
+exists; the database is only an index of it. Both publishers compare the two
+before writing and add back anything published that the database does not name.
+This has to compare against the *assets* — an earlier version compared against
+the published database, which fails exactly when it matters, because once one
+run has written a database without a package, the published copy does not name
+it either.
+
+**Epoch versions are renamed before anything records them.** GitHub rewrites
+`:` to `.` in release asset names, silently. A pacman epoch puts a colon in the
+filename, so `dotnet-sdk-preview-bin-1:11.0.0…` is stored as `…-1.11.0.0…`
+while the database still says otherwise — pacman 404s on every epoch package,
+and the prune deletes them for not matching.
+`.github/scripts/sanitize-epoch-filenames.py` applies the substitution up
+front. `%VERSION%` comes from `.PKGINFO`, not the filename, so the epoch
+survives and only the download URL changes. `+` and `~` are preserved; only
+`:` is affected. The publisher then verifies every `%FILENAME%` has a matching
+asset and fails naming them if not, because this class of bug is otherwise
+invisible: a repo that looks published and 404s on download.
+
 ## Package signing
 
 Every package and database is signed, so clients can run `SigLevel = Required
