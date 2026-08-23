@@ -91,6 +91,18 @@ export SUDO_USER=builder
 # yay-noninteractive runs yay as this user rather than as root, so that yay
 # stops printing "Avoid running yay as root/sudo." onto the stdout makepkg
 # parses for dependency names. It still needs root for the pacman half.
+# Make [custom] and [ghidra] available to this container too.
+#
+# build-pacman-repo resolves a member's dependencies with pacman and yay, and
+# neither knows about packages this project publishes unless the repos are
+# configured. It matters for Ghidra extensions in particular: they are compiled
+# against a specific Ghidra release, so ghidra-noprompt is a makedepend, and it
+# lives in [ghidra] because it is far too large to have lived anywhere else.
+#
+# Nothing is downloaded unless a package actually asks for it -- a member that
+# is already up to date is never built, so its makedepends are never installed.
+. /workspace/repo/.github/scripts/enable-custom-repo.sh
+
 echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
 chmod 0440 /etc/sudoers.d/builder
 

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Add [custom] to this container's pacman.conf, so packages this project has
-# already published are installable as build dependencies.
+# Add [custom] and [ghidra] to this container's pacman.conf, so packages this
+# project has already published are installable as build dependencies.
 #
 # Source it, do not execute it -- it edits /etc/pacman.conf in the caller's
 # container and is a no-op worth repeating.
 #
 #   . enable-custom-repo.sh
 #
-# Reads GH_REPO (default xerootg/arch) and RELEASE_TAG (default custom-repo).
+# Reads GH_REPO (default xerootg/arch), RELEASE_TAG (default custom-repo) and
+# GHIDRA_RELEASE_TAG (default pacman-repo).
 
 # Make everything already published available as a build dependency.
 #
@@ -43,6 +44,24 @@ cat >> /etc/pacman.conf <<PACEOF
 
 [custom]
 Server = $CUSTOM_URL
+SigLevel = $siglevel
+PACEOF
+
+# [ghidra] as well, for anything that builds against Ghidra.
+#
+# A Ghidra extension is compiled against a specific Ghidra release and needs
+# that release present at build time, so ghidra-noprompt is a makedepend --
+# and it lives in its own repo because it is far too large to have been pushed
+# anywhere before releases were used. Same GitHub repo, same signing key,
+# different release tag.
+#
+# Adding it costs nothing when nothing needs it: pacman fetches one small
+# database and no packages.
+GHIDRA_URL="https://github.com/${GH_REPO:-xerootg/arch}/releases/download/${GHIDRA_RELEASE_TAG:-pacman-repo}"
+cat >> /etc/pacman.conf <<PACEOF
+
+[ghidra]
+Server = $GHIDRA_URL
 SigLevel = $siglevel
 PACEOF
 

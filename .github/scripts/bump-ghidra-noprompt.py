@@ -9,6 +9,7 @@ PKGBUILD already names that version, so the caller can skip the commit.
 Usage: bump-ghidra-noprompt.py <metadata.json> <pkgbuild-dir>
 """
 
+import glob
 import json
 import os
 import re
@@ -33,6 +34,54 @@ def set_var(text, name, value, count=1):
     if found != count:
         sys.exit(f"error: expected {count} assignment(s) of {name!r}, found {found}")
     return new
+
+
+def stamp_extensions(version, javaver):
+    """Point every Ghidra extension recipe at the new Ghidra, and bump its pkgrel.
+
+    An extension is compiled against one Ghidra release and records that version
+    in extension.properties; Ghidra then refuses to load an extension whose
+    recorded version does not match, silently, in the log. So the packages carry
+    an exact `ghidra-noprompt=<version>` dependency, and this rewrites it when
+    Ghidra moves.
+
+    pkgrel has to move too. build-pacman-repo decides what to rebuild by
+    comparing versions against the database, and the extension's own pkgver has
+    not changed -- so without a pkgrel bump the recipe would name a Ghidra that
+    is not installable and never be rebuilt to fix it.
+    """
+    stamped = []
+    for pkgbuild in sorted(glob.glob("pkgbuilds/ghidra-ext-*/PKGBUILD")):
+        with open(pkgbuild, encoding="utf-8") as fh:
+            text = fh.read()
+        if "_ghidraver" not in text:
+            print(f"{pkgbuild}: no _ghidraver to stamp; skipping", file=sys.stderr)
+            continue
+
+        updated = set_var(text, "_ghidraver", version)
+        if javaver:
+            # Optional: an extension may pin java independently of Ghidra.
+            try:
+                updated = set_var(updated, "_javaver", str(javaver))
+            except SystemExit:
+                pass
+
+        if updated == text:
+            continue
+
+        m = re.search(r"(?m)^pkgrel=(\d+)$", updated)
+        if m:
+            updated = set_var(updated, "pkgrel", str(int(m.group(1)) + 1))
+        else:
+            print(f"{pkgbuild}: no plain pkgrel to bump; it will not rebuild",
+                  file=sys.stderr)
+
+        with open(pkgbuild, "w", encoding="utf-8") as fh:
+            fh.write(updated)
+        stamped.append(os.path.basename(os.path.dirname(pkgbuild)))
+        print(f"{pkgbuild}: stamped Ghidra {version}")
+
+    return stamped
 
 
 def main():
@@ -115,7 +164,9 @@ def main():
         with open(srcinfo_path, "w", encoding="utf-8") as fh:
             fh.write(srcinfo)
 
-    emit(changed="true", version=version, previous=previous)
+    stamped = stamp_extensions(version, meta.get("java_version") or meta.get("javaver"))
+    emit(changed="true", version=version, previous=previous,
+         extensions_restamped=" ".join(stamped) if stamped else "")
 
 
 if __name__ == "__main__":
