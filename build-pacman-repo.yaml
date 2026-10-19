@@ -27,6 +27,13 @@ members:
   - directory: kwin-scripts-xeros-tiling-window-manager
   - directory: ipscan
 
+  # Ghidra extensions (see docs/ghidra-extension-template.PKGBUILD). Built
+  # against ghidra-noprompt from [ghidra]; restamped by
+  # bump-ghidra-noprompt.py when Ghidra moves. allow-failure until the first
+  # green run, like every other new member.
+  - directory: ghidra-ext-xstormy16
+    allow-failure: true
+
   # ---------------------------------------------------------------------
   # Added 2026-08-19. Directories are cloned from the AUR at build time by
   # build-inside-container.sh when not already present, so these need not be

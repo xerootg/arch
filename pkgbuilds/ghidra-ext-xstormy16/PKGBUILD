@@ -1,0 +1,60 @@
+# Maintainer: xerootg <4009802+xerootg@users.noreply.github.com>
+#
+# Ghidra extension recipe, from docs/ghidra-extension-template.PKGBUILD.
+# The extension records the Ghidra version it was built against and Ghidra will
+# not load it under any other, so the dependency is exact and _ghidraver is
+# restamped by .github/scripts/bump-ghidra-noprompt.py.
+
+pkgname=ghidra-ext-xstormy16
+pkgver=1.0.1
+pkgrel=1
+
+# >>> generated: do not hand-edit >>>
+# Stamped by .github/scripts/bump-ghidra-noprompt.py when the fork releases.
+_ghidraver=12.1.2
+_javaver=21
+# <<< generated <<<
+
+# Directory name under Ghidra/Extensions/; matches the gradle project name.
+_extname=xstormy16
+
+pkgdesc="Xstormy16 (Sanyo/onsemi LC88) processor module with a Sigma lens/USB dock firmware loader (Ghidra ${_ghidraver} extension)"
+arch=('x86_64')
+url='https://github.com/xerootg/ghidra-xstormy16'
+license=('GPL-3.0-or-later')
+
+depends=("ghidra-noprompt=${_ghidraver}")
+makedepends=('gradle' "java-environment>=${_javaver}")
+
+source=("ghidra-xstormy16-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('7b5310c046cdc88fb2566771d6b3163eba48644c0f57d80b83295b2efe0e9bb8')
+
+options=('!strip')
+
+build() {
+	cd "${srcdir}/ghidra-xstormy16-${pkgver}"
+
+	export GHIDRA_INSTALL_DIR="/opt/ghidra-noprompt"
+	export GRADLE_USER_HOME="${srcdir}/gradle-home"
+
+	# The Kotlin compiler and stdlib come from Maven Central; the build container
+	# has network. The .sla is compiled by the build too (compileSleigh).
+	gradle -PGHIDRA_INSTALL_DIR="${GHIDRA_INSTALL_DIR}" --no-daemon buildExtension
+}
+
+package() {
+	cd "${srcdir}/ghidra-xstormy16-${pkgver}"
+
+	local _zip
+	_zip="$(find dist -maxdepth 1 -name "*_${_extname}.zip" -print -quit)"
+	if [ -z "${_zip}" ]; then
+		echo "no built extension zip in dist/ -- did buildExtension run?" >&2
+		return 1
+	fi
+
+	install -dm755 "${pkgdir}/opt/ghidra-noprompt/Ghidra/Extensions"
+	bsdtar -xf "${_zip}" -C "${pkgdir}/opt/ghidra-noprompt/Ghidra/Extensions"
+
+	install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+	install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}
