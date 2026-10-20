@@ -78,11 +78,9 @@ to commit the package to the Pages repo and break the push for every other
 package.
 
 The job decides what to build from the release itself, not from the checked-in
-`pkgver`, so it stays correct without needing to commit anything. It does try to
-refresh the PKGBUILD afterwards, but the `main` ruleset requires a pull request
-and `github-actions[bot]` cannot bypass it, so that push is best effort and
-non-fatal — expect the checked-in recipe to lag a release behind unless the bot
-is granted a bypass.
+`pkgver`, so it stays correct without needing to commit anything. The refreshed
+recipes reach `main` through the pull request described above; until it is
+merged, the checked-in recipes lag the published release.
 
 ## `[orca]` — OrcaSlicer, for the same reason
 
