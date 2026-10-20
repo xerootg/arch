@@ -158,8 +158,13 @@ jobs:
           # the whole call on one that matches nothing, and the signing
           # artifacts are absent until the signing secrets are configured.
           # nullglob covers *.sig but not a literal path.
+          #
+          # Every package in out/, not just ghidra-noprompt: the database indexes
+          # all of them, the prune below keeps all of them, and the gate looks
+          # for each of them, so an extension left out here would 404 for users
+          # and force a rebuild on every run.
           uploads=(
-            out/ghidra-noprompt-*.pkg.tar.zst
+            out/*.pkg.tar.zst
             "out/${REPO_NAME}.db" "out/${REPO_NAME}.files"
             "out/${REPO_NAME}.db.tar.gz" "out/${REPO_NAME}.files.tar.gz"
           )
