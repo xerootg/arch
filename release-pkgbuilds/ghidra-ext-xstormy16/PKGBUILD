@@ -7,7 +7,7 @@
 # builds it in the same run as ghidra-noprompt and publishes both to [ghidra].
 
 pkgname=ghidra-ext-xstormy16
-pkgver=1.0.1
+pkgver=1.1.0
 pkgrel=1
 
 # >>> generated: do not hand-edit >>>
@@ -30,7 +30,7 @@ conflicts=('ghidra-xstormy16')
 makedepends=('gradle' "java-environment>=${_javaver}")
 
 source=("ghidra-xstormy16-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('7b5310c046cdc88fb2566771d6b3163eba48644c0f57d80b83295b2efe0e9bb8')
+sha256sums=('28a62f0912aa241c655558a856bd9e6dfe3dbf08ad2d58b329b848795d6317a1')
 
 options=('!strip')
 
