@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
-# Builds the ghidra-noprompt package and a standalone pacman database for it,
+# Builds the ghidra-noprompt package, every Ghidra extension recipe in
+# release-pkgbuilds/ghidra-ext-*, and one pacman database holding all of them,
 # inside an archlinux:base-devel container. Run from the repo root with the
 # workspace mounted at /work.
+#
+# The extensions are built here rather than by build-pacman-repo because each
+# pins an exact ghidra-noprompt version. Published separately, a new Ghidra
+# would reach users before the extensions rebuilt against it, and `pacman -Syu`
+# would refuse the transaction ("breaks dependency 'ghidra-noprompt=<old>'").
+# Built together, either the new Ghidra and every extension land in one database
+# or -- if any extension fails to build -- this script fails and nothing is
+# published, leaving users on the previous, consistent set.
 #
 # This package lives outside pkgbuilds/ on purpose: at ~500 MB it cannot be
 # committed to the GitHub Pages repo (GitHub rejects any pushed file over
@@ -40,6 +49,30 @@ mkdir -p "$OUTDIR"
 cp "$BUILDDIR"/*.pkg.tar.zst "$OUTDIR/"
 cp "$BUILDDIR/.SRCINFO" "$PKGDIR/.SRCINFO"
 
+# The extensions compile against the Ghidra just built, so install it. Unlike
+# the repackaging above, these really need their dependencies: a JDK to run
+# gradle, and ghidra-noprompt=<this version>, which pacman -U provides.
+echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+chmod 0440 /etc/sudoers.d/builder
+shopt -s nullglob
+extdirs=(/work/release-pkgbuilds/ghidra-ext-*/)
+shopt -u nullglob
+if [ ${#extdirs[@]} -gt 0 ]; then
+  pacman -U --noconfirm "$OUTDIR"/ghidra-noprompt-*.pkg.tar.zst
+fi
+for extdir in "${extdirs[@]}"; do
+  ext="$(basename "$extdir")"
+  echo "::group::$ext"
+  extbuild="$BUILDDIR/$ext"
+  install -d -o builder -g builder "$extbuild"
+  install -m644 -o builder -g builder "$extdir/PKGBUILD" "$extbuild/PKGBUILD"
+  su builder -c "cd '$extbuild' && makepkg --printsrcinfo > .SRCINFO"
+  su builder -c "cd '$extbuild' && makepkg -f -s --noconfirm --noprogressbar"
+  cp "$extbuild"/*.pkg.tar.zst "$OUTDIR/"
+  cp "$extbuild/.SRCINFO" "$extdir/.SRCINFO"
+  echo "::endgroup::"
+done
+
 cd "$OUTDIR"
 repo-add --new "${REPO_NAME}.db.tar.gz" ./*.pkg.tar.zst
 
@@ -60,5 +93,5 @@ bash /work/.github/scripts/sign-pacman-repo.sh "$OUTDIR" "$REPO_NAME"
 # Everything below runs as root inside the container, so the runner user cannot
 # clean up after us. Drop the build tree here and leave the results writable.
 rm -rf "$BUILDDIR"
-chmod -R a+rwX "$OUTDIR" "$PKGDIR"
+chmod -R a+rwX "$OUTDIR" "$PKGDIR" "${extdirs[@]}"
 ls -lh "$OUTDIR"

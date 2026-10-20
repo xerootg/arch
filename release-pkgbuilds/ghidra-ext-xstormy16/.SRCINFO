@@ -8,6 +8,7 @@ pkgbase = ghidra-ext-xstormy16
 	makedepends = gradle
 	makedepends = java-environment>=21
 	depends = ghidra-noprompt=12.1.2
+	conflicts = ghidra-xstormy16
 	options = !strip
 	source = ghidra-xstormy16-1.0.1.tar.gz::https://github.com/xerootg/ghidra-xstormy16/archive/refs/tags/v1.0.1.tar.gz
 	sha256sums = 7b5310c046cdc88fb2566771d6b3163eba48644c0f57d80b83295b2efe0e9bb8

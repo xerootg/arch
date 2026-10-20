@@ -3,10 +3,19 @@
 
 Reads the release-metadata.json asset published by that fork's `Fork release`
 workflow and rewrites the generated block in the PKGBUILD, plus the matching
-fields in .SRCINFO. Exits 0 with "changed=false" on GITHUB_OUTPUT when the
-PKGBUILD already names that version, so the caller can skip the commit.
+fields in .SRCINFO, then restamps every Ghidra extension recipe next to it.
+Exits 0 with "changed=false" on GITHUB_OUTPUT when nothing in git needs to
+change, so the caller can skip the pull request.
 
-Usage: bump-ghidra-noprompt.py <metadata.json> <pkgbuild-dir>
+Also emits "packages=", the pkgname-pkgver-pkgrel of everything the [ghidra]
+repo should carry, so the caller can tell from the release assets whether any
+of it still needs building.
+
+The optional published database is the [ghidra] repo's current ghidra.db. It
+keeps extension pkgrels moving forward even when the restamp from an earlier
+Ghidra release has not reached main yet (see next_pkgrel).
+
+Usage: bump-ghidra-noprompt.py <metadata.json> <pkgbuild-dir> [published.db]
 """
 
 import glob
@@ -14,6 +23,7 @@ import json
 import os
 import re
 import sys
+import tarfile
 
 FIELDS = ("version", "release_name", "java_min", "zip_sha256", "icon_sha256")
 
@@ -36,7 +46,63 @@ def set_var(text, name, value, count=1):
     return new
 
 
-def stamp_extensions(version, javaver):
+def read_published(db_path):
+    """Map pkgname -> (pkgver, pkgrel, ghidra-noprompt version it depends on).
+
+    Read from a pacman sync database: a tarball of <name>-<ver>-<rel>/desc files.
+    A missing database (first run) means nothing is published.
+    """
+    published = {}
+    if not db_path or not os.path.exists(db_path):
+        return published
+    with tarfile.open(db_path) as db:
+        for member in db.getmembers():
+            if not member.name.endswith("/desc"):
+                continue
+            desc = db.extractfile(member).read().decode("utf-8")
+            fields = {}
+            for block in desc.strip().split("\n\n"):
+                lines = block.split("\n")
+                fields[lines[0].strip("%")] = lines[1:]
+            name = fields["NAME"][0]
+            ver, rel = fields["VERSION"][0].rsplit("-", 1)
+            ghidra = next((d.split("=", 1)[1] for d in fields.get("DEPENDS", [])
+                           if d.startswith("ghidra-noprompt=")), None)
+            published[name] = (ver, rel, ghidra)
+    return published
+
+
+def pkg_id(text):
+    """pkgname-pkgver-pkgrel of a PKGBUILD with plain assignments."""
+    def get(name):
+        m = re.search(rf"(?m)^{name}=['\"]?([^'\"\s]+)['\"]?\s*$", text)
+        if not m:
+            sys.exit(f"error: no plain {name}= assignment")
+        return m.group(1)
+    return f"{get('pkgname')}-{get('pkgver')}-{get('pkgrel')}"
+
+
+def next_pkgrel(name, pkgver, pkgrel, ghidraver, published):
+    """The pkgrel to build at, given what the [ghidra] repo already carries.
+
+    The PKGBUILD in git can lag the published package: this job cannot push to
+    main, so a restamp only lands when its pull request is merged. Restamping
+    the stale recipe again on the next Ghidra release would arrive at the same
+    pkgrel as the package already published for the previous one -- pacman
+    would see no upgrade, keep the old extension and its exact dependency on
+    the old Ghidra, and refuse `pacman -Syu`. So the published package sets the
+    floor, and moving to a different Ghidra always goes strictly above it.
+    """
+    pub = published.get(name)
+    if not pub or pub[0] != pkgver:
+        return pkgrel
+    pub_rel, pub_ghidra = int(pub[1]), pub[2]
+    if pub_ghidra == ghidraver:
+        return max(pkgrel, pub_rel)
+    return max(pkgrel, pub_rel + 1)
+
+
+def stamp_extensions(version, javaver, published):
     """Point every Ghidra extension recipe at the new Ghidra, and bump its pkgrel.
 
     An extension is compiled against one Ghidra release and records that version
@@ -45,18 +111,19 @@ def stamp_extensions(version, javaver):
     an exact `ghidra-noprompt=<version>` dependency, and this rewrites it when
     Ghidra moves.
 
-    pkgrel has to move too. build-pacman-repo decides what to rebuild by
-    comparing versions against the database, and the extension's own pkgver has
-    not changed -- so without a pkgrel bump the recipe would name a Ghidra that
-    is not installable and never be rebuilt to fix it.
+    pkgrel has to move too. The extension's own pkgver has not changed, so
+    without a pkgrel bump pacman would not see the rebuilt package as an
+    upgrade and would keep the one that pins the old Ghidra.
+
+    Returns (restamped extension names, their pkgname-pkgver-pkgrel ids).
     """
-    stamped = []
-    for pkgbuild in sorted(glob.glob("pkgbuilds/ghidra-ext-*/PKGBUILD")):
+    stamped, ids = [], []
+    for pkgbuild in sorted(glob.glob("release-pkgbuilds/ghidra-ext-*/PKGBUILD")):
         with open(pkgbuild, encoding="utf-8") as fh:
             text = fh.read()
         if "_ghidraver" not in text:
-            print(f"{pkgbuild}: no _ghidraver to stamp; skipping", file=sys.stderr)
-            continue
+            sys.exit(f"error: {pkgbuild} has no _ghidraver to stamp; it would "
+                     "be published pinned to a Ghidra that is not")
 
         updated = set_var(text, "_ghidraver", version)
         if javaver:
@@ -66,28 +133,32 @@ def stamp_extensions(version, javaver):
             except SystemExit:
                 pass
 
+        m = re.search(r"(?m)^pkgrel=(\d+)$", updated)
+        if not m:
+            sys.exit(f"error: {pkgbuild} has no plain pkgrel to bump")
+        pkgrel = int(m.group(1))
+        if updated != text:
+            pkgrel += 1
+        name, pkgver, _ = pkg_id(updated).rsplit("-", 2)
+        pkgrel = next_pkgrel(name, pkgver, pkgrel, version, published)
+        updated = set_var(updated, "pkgrel", str(pkgrel))
+
+        ids.append(pkg_id(updated))
         if updated == text:
             continue
-
-        m = re.search(r"(?m)^pkgrel=(\d+)$", updated)
-        if m:
-            updated = set_var(updated, "pkgrel", str(int(m.group(1)) + 1))
-        else:
-            print(f"{pkgbuild}: no plain pkgrel to bump; it will not rebuild",
-                  file=sys.stderr)
-
         with open(pkgbuild, "w", encoding="utf-8") as fh:
             fh.write(updated)
         stamped.append(os.path.basename(os.path.dirname(pkgbuild)))
-        print(f"{pkgbuild}: stamped Ghidra {version}")
+        print(f"{pkgbuild}: stamped Ghidra {version}, pkgrel {pkgrel}")
 
-    return stamped
+    return stamped, ids
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         sys.exit(__doc__)
     meta_path, pkgdir = sys.argv[1], sys.argv[2]
+    published = read_published(sys.argv[3] if len(sys.argv) == 4 else None)
 
     with open(meta_path, encoding="utf-8") as fh:
         meta = json.load(fh)
@@ -128,8 +199,15 @@ def main():
     if previous != version:
         updated = set_var(updated, "pkgrel", "1")
 
+    # The extensions are restamped whether or not ghidra-noprompt itself moved:
+    # a recipe added or edited by hand may name an older Ghidra.
+    stamped, ext_ids = stamp_extensions(version, meta["java_min"], published)
+    packages = " ".join([pkg_id(updated)] + ext_ids)
+
     if updated == pkgbuild:
-        emit(changed="false", version=version, previous=previous)
+        emit(changed="true" if stamped else "false", version=version,
+             previous=previous, packages=packages,
+             extensions_restamped=" ".join(stamped))
         return
 
     with open(pkgbuild_path, "w", encoding="utf-8") as fh:
@@ -164,9 +242,8 @@ def main():
         with open(srcinfo_path, "w", encoding="utf-8") as fh:
             fh.write(srcinfo)
 
-    stamped = stamp_extensions(version, meta["java_min"])
-    emit(changed="true", version=version, previous=previous,
-         extensions_restamped=" ".join(stamped) if stamped else "")
+    emit(changed="true", version=version, previous=previous, packages=packages,
+         extensions_restamped=" ".join(stamped))
 
 
 if __name__ == "__main__":

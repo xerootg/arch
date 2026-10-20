@@ -3,7 +3,8 @@
 # Ghidra extension recipe, from docs/ghidra-extension-template.PKGBUILD.
 # The extension records the Ghidra version it was built against and Ghidra will
 # not load it under any other, so the dependency is exact and _ghidraver is
-# restamped by .github/scripts/bump-ghidra-noprompt.py.
+# restamped by .github/scripts/bump-ghidra-noprompt.py. ghidra-noprompt.yml
+# builds it in the same run as ghidra-noprompt and publishes both to [ghidra].
 
 pkgname=ghidra-ext-xstormy16
 pkgver=1.0.1
@@ -24,6 +25,8 @@ url='https://github.com/xerootg/ghidra-xstormy16'
 license=('GPL-3.0-or-later')
 
 depends=("ghidra-noprompt=${_ghidraver}")
+# The same extension packaged for Arch's ghidra, from the upstream repository.
+conflicts=('ghidra-xstormy16')
 makedepends=('gradle' "java-environment>=${_javaver}")
 
 source=("ghidra-xstormy16-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
