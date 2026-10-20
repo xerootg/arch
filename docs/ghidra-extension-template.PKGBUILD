@@ -52,7 +52,11 @@ build() {
 	# Ghidra's own build plugin wants this either as a property or in the
 	# environment; give it both, since extensions disagree about which they read.
 	export GHIDRA_INSTALL_DIR="/opt/ghidra-noprompt"
-	export JAVA_HOME="/usr/lib/jvm/java-${_javaver}-openjdk"
+	# No JAVA_HOME. java-environment>=${_javaver} is satisfied by whichever JDK
+	# pacman picks -- non-interactively that is jdk-openjdk, the newest -- so a
+	# path naming JDK ${_javaver} may not exist, and gradle refuses to start when
+	# JAVA_HOME points nowhere. Ghidra's buildExtension.gradle sets source and
+	# target compatibility to Ghidra's own Java release, so a newer JDK is fine.
 
 	# --offline is not an option here: Ghidra extensions resolve dependencies
 	# from Maven Central at build time. The build container has network.
