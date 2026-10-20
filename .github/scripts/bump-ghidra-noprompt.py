@@ -164,7 +164,7 @@ def main():
         with open(srcinfo_path, "w", encoding="utf-8") as fh:
             fh.write(srcinfo)
 
-    stamped = stamp_extensions(version, meta.get("java_version") or meta.get("javaver"))
+    stamped = stamp_extensions(version, meta["java_min"])
     emit(changed="true", version=version, previous=previous,
          extensions_restamped=" ".join(stamped) if stamped else "")
 
