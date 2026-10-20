@@ -27,6 +27,10 @@ restored without a rebuild. See [xerootg/ghidra](https://github.com/xerootg/ghid
 for the patch and the build that produced it. It `provides`/`conflicts` with
 `ghidra`.
 
+Also contains Ghidra extensions built against that exact release, such as
+**ghidra-ext-xstormy16**. They are rebuilt and published together with every
+ghidra-noprompt update, so `pacman -Syu` always upgrades them as a set.
+
 Assets here are replaced in place on every update; the tag is fixed so the
 `Server` URL never changes. The current contents of every repo are listed at
 [xerootg.github.io](https://xerootg.github.io/).
