@@ -51,20 +51,36 @@ rebuild. The patch and the build that produced it live in
 
 `.github/workflows/ghidra-noprompt.yml` checks that fork daily, repackages any
 new release, refreshes the `ghidra.db` in the fixed `pacman-repo` release, and
-drops the superseded package asset. The release tag never changes, so the
+drops the superseded package assets. The release tag never changes, so the
 `Server` URL above is stable.
 
-Its PKGBUILD lives in `release-pkgbuilds/`, not `pkgbuilds/`, so the
+Ghidra extensions (`ghidra-ext-*`, e.g. `ghidra-ext-xstormy16`) live here too.
+An extension only loads in the exact Ghidra it was compiled against, so each
+depends on `ghidra-noprompt=<version>`. Publishing them on a separate schedule
+would leave a window where the new Ghidra is out and the extension still pins
+the old one, and `pacman -Syu` refuses that transaction. So the same job builds
+every `release-pkgbuilds/ghidra-ext-*` against the Ghidra it just packaged and
+writes them all into one database. If any extension fails to build, nothing is
+published and users stay on the previous matching set. New extensions start from
+`docs/ghidra-extension-template.PKGBUILD`.
+
+The job cannot push to `main` (the ruleset requires a pull request), so it opens
+one from `bot/ghidra-noprompt-<version>` with the restamped recipes. The
+published release stays authoritative either way: extension `pkgrel`s are
+derived from the published database, so a pull request left unmerged cannot
+make the next release reuse a package version. This needs **Allow GitHub
+Actions to create and approve pull requests** enabled in the repository
+settings.
+
+These PKGBUILDs live in `release-pkgbuilds/`, not `pkgbuilds/`, so the
 `build-pacman-repo` pipeline never sees it — that pipeline would otherwise try
 to commit the package to the Pages repo and break the push for every other
 package.
 
 The job decides what to build from the release itself, not from the checked-in
-`pkgver`, so it stays correct without needing to commit anything. It does try to
-refresh the PKGBUILD afterwards, but the `main` ruleset requires a pull request
-and `github-actions[bot]` cannot bypass it, so that push is best effort and
-non-fatal — expect the checked-in recipe to lag a release behind unless the bot
-is granted a bypass.
+`pkgver`, so it stays correct without needing to commit anything. The refreshed
+recipes reach `main` through the pull request described above; until it is
+merged, the checked-in recipes lag the published release.
 
 ## `[orca]` — OrcaSlicer, for the same reason
 

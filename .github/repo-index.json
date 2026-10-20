@@ -16,7 +16,7 @@
       "name": "ghidra",
       "server": "https://github.com/xerootg/arch/releases/download/pacman-repo",
       "db": "dbs/ghidra.db",
-      "note": "Stock Ghidra with the <em>\"would you like to analyze it now?\"</em> prompt moved to a tool option that ships disabled. About 500 MB, which is over GitHub's 100 MB push limit, so it is served from a release rather than Pages.",
+      "note": "Stock Ghidra with the <em>\"would you like to analyze it now?\"</em> prompt moved to a tool option that ships disabled, plus Ghidra extensions built against it and published in the same update. About 500 MB, which is over GitHub's 100 MB push limit, so it is served from a release rather than Pages.",
       "workflow": "ghidra-noprompt.yml"
     },
     {

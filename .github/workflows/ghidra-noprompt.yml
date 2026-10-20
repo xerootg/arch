@@ -6,6 +6,10 @@ name: ghidra-noprompt
 # release there, repackages it for Arch, and serves it as its own small pacman
 # repository hosted in a GitHub Release.
 #
+# The Ghidra extensions in release-pkgbuilds/ghidra-ext-* are built and
+# published by this same job, into the same database, because each pins the
+# exact ghidra-noprompt it was compiled against (see build-ghidra-noprompt.sh).
+#
 # It deliberately does not go through build-pacman-repo / GitHub Pages: the
 # package is ~500 MB and GitHub rejects any pushed file over 100 MB, which would
 # break the Pages repo for every other package too.
@@ -22,6 +26,8 @@ on:
 
 permissions:
   contents: write
+  # The restamped recipes reach main through a pull request; see the last step.
+  pull-requests: write
 
 concurrency:
   group: "${{ github.workflow }}"
@@ -54,33 +60,61 @@ jobs:
             --pattern release-metadata.json --dir . --clobber
           cat release-metadata.json
 
-      - name: Update PKGBUILD
+      - name: Fetch the published database
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Tells the bump which extension pkgrels are already taken, so a
+          # recipe whose restamp has not reached main yet still moves forward.
+          # --dir rather than --output, as above.
+          if gh release download "$RELEASE_TAG" --pattern "${REPO_NAME}.db" \
+               --dir published --clobber; then
+            mv "published/${REPO_NAME}.db" published.db
+          else
+            echo "::warning::no ${REPO_NAME}.db published yet; starting from empty"
+          fi
+
+      - name: Update PKGBUILDs
         id: bump
-        run: python3 .github/scripts/bump-ghidra-noprompt.py release-metadata.json "$PKGDIR"
+        run: |
+          set -euo pipefail
+          db=()
+          [ -f published.db ] && db=(published.db)
+          python3 .github/scripts/bump-ghidra-noprompt.py \
+            release-metadata.json "$PKGDIR" "${db[@]}"
 
       - name: Decide whether to build
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.bump.outputs.version }}
+          PACKAGES: ${{ steps.bump.outputs.packages }}
         run: |
           set -euo pipefail
           # The published release is the state, not the committed PKGBUILD.
           # main is protected by a ruleset, so this job cannot commit a version
           # bump; deciding from the release keeps the job stateless and correct
           # whether or not the PKGBUILD in git happens to be current.
+          #
+          # Everything is rebuilt when anything is missing: the database is
+          # written from scratch out of what this run builds, so a package left
+          # out of the build would drop out of the repo.
           build=false
           if [ "${{ inputs.force }}" = "true" ]; then
             build=true
             echo "Forced rebuild requested."
           else
             assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)"
-            if ! grep -q "^ghidra-noprompt-${VERSION}-" <<<"$assets"; then
-              build=true
-              echo "No ghidra-noprompt-${VERSION}-* asset published yet."
-            else
-              echo "ghidra-noprompt ${VERSION} is already published."
-            fi
+            for pkg in $PACKAGES; do
+              # pkgname-pkgver-pkgrel, then the arch: an exact package, not a prefix
+              # of a longer pkgrel.
+              if ! grep -qE "^${pkg//./\\.}-[^-]+\.pkg\.tar\.zst$" <<<"$assets"; then
+                build=true
+                echo "No ${pkg} package published yet."
+              else
+                echo "${pkg} is already published."
+              fi
+            done
           fi
           echo "build=$build" >> "$GITHUB_OUTPUT"
 
@@ -124,8 +158,13 @@ jobs:
           # the whole call on one that matches nothing, and the signing
           # artifacts are absent until the signing secrets are configured.
           # nullglob covers *.sig but not a literal path.
+          #
+          # Every package in out/, not just ghidra-noprompt: the database indexes
+          # all of them, the prune below keeps all of them, and the gate looks
+          # for each of them, so an extension left out here would 404 for users
+          # and force a rebuild on every run.
           uploads=(
-            out/ghidra-noprompt-*.pkg.tar.zst
+            out/*.pkg.tar.zst
             "out/${REPO_NAME}.db" "out/${REPO_NAME}.files"
             "out/${REPO_NAME}.db.tar.gz" "out/${REPO_NAME}.files.tar.gz"
           )
@@ -139,14 +178,18 @@ jobs:
           printf 'uploading: %s\n' "${uploads[@]}"
           gh release upload "$RELEASE_TAG" "${uploads[@]}" --clobber
 
-          # Drop superseded package assets, but only after the new one is up.
-          # In the steady state both greps come up empty -- there is one package
-          # asset and it is the one just uploaded -- and an empty grep exits 1,
-          # which under pipefail would fail the step after a successful publish.
-          keep="$(basename out/ghidra-noprompt-*.pkg.tar.zst)"
+          # Drop superseded package assets, but only after the new ones are up.
+          # The database was written from exactly what is in out/, so any other
+          # package asset is no longer indexed. In the steady state both greps
+          # come up empty, and an empty grep exits 1, which under pipefail
+          # would fail the step after a successful publish.
+          keep=()
+          for f in out/*.pkg.tar.zst; do
+            keep+=( -e "$(basename "$f")" -e "$(basename "$f").sig" )
+          done
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
-            | { grep -E '^ghidra-noprompt-.*\.pkg\.tar\.zst(\.sig)?$' || true; } \
-            | { grep -vxF -e "$keep" -e "${keep}.sig" || true; } \
+            | { grep -E '\.pkg\.tar\.zst(\.sig)?$' || true; } \
+            | { grep -vxF "${keep[@]}" || true; } \
             | while read -r old; do
                 echo "Removing superseded asset $old"
                 gh release delete-asset "$RELEASE_TAG" "$old" --yes
@@ -156,37 +199,73 @@ jobs:
             echo "### Published ghidra-noprompt ${VERSION}"
             echo
             echo '```'
-            echo "$keep"
+            for f in out/*.pkg.tar.zst; do basename "$f"; done
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Refresh the PKGBUILD in the repository
-        # Best effort, and deliberately not fatal. main is covered by a
-        # repository ruleset requiring a pull request, which github-actions[bot]
-        # cannot bypass. The package and its database are already published at
-        # this point, so a rejected push must not fail the run -- it only means
-        # the checked-in recipe still names the previous version.
-        if: steps.gate.outputs.build == 'true'
+      - name: Propose the refreshed PKGBUILDs
+        # Runs whenever the recipes in git trail what this run stamped -- also
+        # on a run that found everything already published, so a pull request
+        # that failed to open, or was closed unmerged, is proposed again.
+        #
+        # Best effort, and deliberately not fatal: the packages and their
+        # database are already published, and the bump takes extension pkgrels
+        # from the published database, so a recipe that never reaches main
+        # cannot make the next release collide with this one. main is covered
+        # by a repository ruleset requiring a pull request, which
+        # github-actions[bot] cannot bypass, so open one rather than pushing.
+        # That needs "Allow GitHub Actions to create and approve pull requests"
+        # in the repository settings. A pull request opened with GITHUB_TOKEN
+        # starts no workflows, which is fine here: build-repo builds nothing
+        # under release-pkgbuilds/.
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+          PREVIOUS: ${{ steps.bump.outputs.previous }}
+          RESTAMPED: ${{ steps.bump.outputs.extensions_restamped }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          rm -f release-metadata.json release-notes.md
-          rm -rf out .build
+          rm -f release-metadata.json release-notes.md published.db
+          rm -rf published out .build
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add "$PKGDIR"
+          git add "$PKGDIR" release-pkgbuilds/
           if git diff --cached --quiet; then
-            echo "PKGBUILD already matches the published release."
+            echo "PKGBUILDs already match the published release."
             exit 0
           fi
-          git commit -q -m "ghidra-noprompt: ${{ steps.bump.outputs.previous || 'rebuild' }} -> ${{ steps.bump.outputs.version }}"
-          if git push 2>&1; then
-            echo "Pushed the PKGBUILD refresh."
+
+          if [ "$PREVIOUS" = "$VERSION" ]; then
+            title="ghidra: restamp recipes for ${VERSION}"
           else
-            echo "::warning::Could not push the PKGBUILD refresh; main requires changes to go through a pull request. The published release is authoritative and is up to date."
+            title="ghidra-noprompt: ${PREVIOUS} -> ${VERSION}"
+          fi
+          body="The recipes [${REPO_NAME}] was built from, by ${RUN_URL}."
+          if [ -n "$RESTAMPED" ]; then
+            body+=$'\n\n'"Extensions restamped: ${RESTAMPED}."
+          fi
+          branch="bot/ghidra-noprompt-${VERSION}"
+          git commit -q -m "$title"
+
+          # One branch per Ghidra version, force-pushed: a later run for the same
+          # version replaces the proposal rather than stacking commits on it.
+          if ! git push -f origin "HEAD:refs/heads/${branch}" 2>&1; then
+            echo "::warning::Could not push ${branch}. The published release is authoritative and is up to date."
+            exit 0
+          fi
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "Updated the open pull request for ${branch}."
+          elif gh pr create --base main --head "$branch" --title "$title" --body "$body" 2>&1; then
+            echo "Opened a pull request for ${branch}."
+          else
+            echo "::warning::Pushed ${branch} but could not open a pull request for it."
             {
               echo
-              echo "> The PKGBUILD refresh could not be pushed: \`main\` requires a pull"
-              echo "> request. The release is published and correct regardless. To have this"
-              echo "> committed automatically, give the Actions bot a bypass on the ruleset."
+              echo "> The refreshed recipes are on \`${branch}\`, but no pull request could"
+              echo "> be opened. Allow GitHub Actions to create pull requests in the repository"
+              echo "> settings, or open one by hand. The release is published and correct"
+              echo "> regardless."
             } >> "$GITHUB_STEP_SUMMARY"
           fi

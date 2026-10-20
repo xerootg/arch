@@ -95,9 +95,9 @@ export SUDO_USER=builder
 #
 # build-pacman-repo resolves a member's dependencies with pacman and yay, and
 # neither knows about packages this project publishes unless the repos are
-# configured. It matters for Ghidra extensions in particular: they are compiled
-# against a specific Ghidra release, so ghidra-noprompt is a makedepend, and it
-# lives in [ghidra] because it is far too large to have lived anywhere else.
+# configured. [ghidra] is there for anything that builds against Ghidra; the
+# ghidra-ext-* extensions themselves are not members here but are built by
+# ghidra-noprompt.yml, in the same run as the Ghidra they pin.
 #
 # Nothing is downloaded unless a package actually asks for it -- a member that
 # is already up to date is never built, so its makedepends are never installed.

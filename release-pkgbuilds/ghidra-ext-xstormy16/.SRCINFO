@@ -1,0 +1,16 @@
+pkgbase = ghidra-ext-xstormy16
+	pkgdesc = Xstormy16 (Sanyo/onsemi LC88) processor module with a Sigma lens/USB dock firmware loader (Ghidra 12.1.2 extension)
+	pkgver = 1.1.0
+	pkgrel = 1
+	url = https://github.com/xerootg/ghidra-xstormy16
+	arch = x86_64
+	license = GPL-3.0-or-later
+	makedepends = gradle
+	makedepends = java-environment>=21
+	depends = ghidra-noprompt=12.1.2
+	conflicts = ghidra-xstormy16
+	options = !strip
+	source = ghidra-xstormy16-1.1.0.tar.gz::https://github.com/xerootg/ghidra-xstormy16/archive/refs/tags/v1.1.0.tar.gz
+	sha256sums = 28a62f0912aa241c655558a856bd9e6dfe3dbf08ad2d58b329b848795d6317a1
+
+pkgname = ghidra-ext-xstormy16

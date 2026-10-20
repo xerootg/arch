@@ -1,8 +1,9 @@
 # Template: a Ghidra extension as a pacman package.
 #
-# Copy to pkgbuilds/<pkgname>/PKGBUILD, fill in the marked fields, and add the
-# directory to build-pacman-repo.yaml. Committed recipes are used as-is; only
-# members without a directory get cloned from the AUR.
+# Copy to release-pkgbuilds/ghidra-ext-<name>/PKGBUILD and fill in the marked
+# fields. That is all: ghidra-noprompt.yml builds every release-pkgbuilds/
+# ghidra-ext-* in the same run as ghidra-noprompt and publishes them together
+# to [ghidra]. Do not add it to build-pacman-repo.yaml.
 #
 # ---------------------------------------------------------------------------
 # The one thing that makes Ghidra extensions different from ordinary packages
@@ -12,7 +13,10 @@
 # whose recorded version does not match the running one -- silently, in the
 # log, which is a miserable way to find out. So the package pins an exact
 # dependency, and _ghidraver below is rewritten by the same bump script that
-# updates ghidra-noprompt. When Ghidra moves, these rebuild.
+# updates ghidra-noprompt. When Ghidra moves, these rebuild in the same run and
+# land in the same database, so `pacman -Syu` always sees a matching pair. An
+# extension that fails to build holds the new Ghidra back for everyone, so fix
+# it or remove it from release-pkgbuilds/ promptly.
 
 pkgname=ghidra-ext-CHANGEME
 pkgver=0.0.0
@@ -52,7 +56,11 @@ build() {
 	# Ghidra's own build plugin wants this either as a property or in the
 	# environment; give it both, since extensions disagree about which they read.
 	export GHIDRA_INSTALL_DIR="/opt/ghidra-noprompt"
-	export JAVA_HOME="/usr/lib/jvm/java-${_javaver}-openjdk"
+	# No JAVA_HOME. java-environment>=${_javaver} is satisfied by whichever JDK
+	# pacman picks -- non-interactively that is jdk-openjdk, the newest -- so a
+	# path naming JDK ${_javaver} may not exist, and gradle refuses to start when
+	# JAVA_HOME points nowhere. Ghidra's buildExtension.gradle sets source and
+	# target compatibility to Ghidra's own Java release, so a newer JDK is fine.
 
 	# --offline is not an option here: Ghidra extensions resolve dependencies
 	# from Maven Central at build time. The build container has network.
