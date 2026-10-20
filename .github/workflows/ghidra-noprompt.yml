@@ -67,9 +67,13 @@ jobs:
           set -euo pipefail
           # Tells the bump which extension pkgrels are already taken, so a
           # recipe whose restamp has not reached main yet still moves forward.
-          gh release download "$RELEASE_TAG" --pattern "${REPO_NAME}.db" \
-            --output published.db --clobber \
-            || echo "::warning::no ${REPO_NAME}.db published yet; starting from empty"
+          # --dir rather than --output, as above.
+          if gh release download "$RELEASE_TAG" --pattern "${REPO_NAME}.db" \
+               --dir published --clobber; then
+            mv "published/${REPO_NAME}.db" published.db
+          else
+            echo "::warning::no ${REPO_NAME}.db published yet; starting from empty"
+          fi
 
       - name: Update PKGBUILDs
         id: bump
@@ -219,7 +223,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -f release-metadata.json release-notes.md published.db
-          rm -rf out .build
+          rm -rf published out .build
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add "$PKGDIR" release-pkgbuilds/
