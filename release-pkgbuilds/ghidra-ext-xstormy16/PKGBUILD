@@ -8,11 +8,11 @@
 
 pkgname=ghidra-ext-xstormy16
 pkgver=1.1.0
-pkgrel=1
+pkgrel=2
 
 # >>> generated: do not hand-edit >>>
 # Stamped by .github/scripts/bump-ghidra-noprompt.py when the fork releases.
-_ghidraver=12.1.2
+_ghidraver=12.1.4
 _javaver=21
 # <<< generated <<<
 
